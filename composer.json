@@ -1,0 +1,64 @@
+{
+    "name": "asadbekrahimov/eimzo-integration",
+    "description": "Laravel package for E-IMZO authentication, PKCS#7 signing, verification, timestamping and demo examples.",
+    "type": "library",
+    "license": "MIT",
+    "keywords": [
+        "laravel",
+        "e-imzo",
+        "eimzo",
+        "pkcs7",
+        "digital-signature",
+        "uzbekistan"
+    ],
+    "authors": [
+        {
+            "name": "Asadbek Rahimov",
+            "homepage": "https://github.com/AsadbekRahimov"
+        }
+    ],
+    "require": {
+        "php": "^7.4|^8.0",
+        "guzzlehttp/guzzle": "^7.0.1",
+        "illuminate/auth": "^8.0|^9.0|^10.0",
+        "illuminate/contracts": "^8.0|^9.0|^10.0",
+        "illuminate/database": "^8.0|^9.0|^10.0",
+        "illuminate/filesystem": "^8.0|^9.0|^10.0",
+        "illuminate/http": "^8.0|^9.0|^10.0",
+        "illuminate/routing": "^8.0|^9.0|^10.0",
+        "illuminate/support": "^8.0|^9.0|^10.0",
+        "illuminate/view": "^8.0|^9.0|^10.0"
+    },
+    "require-dev": {
+        "orchestra/testbench": "^6.0|^7.0|^8.0",
+        "phpunit/phpunit": "^9.5"
+    },
+    "autoload": {
+        "psr-4": {
+            "AsadbekRahimov\\EimzoIntegration\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "AsadbekRahimov\\EimzoIntegration\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "AsadbekRahimov\\EimzoIntegration\\Providers\\EimzoServiceProvider"
+            ]
+        }
+    },
+    "scripts": {
+        "test": "@php vendor/bin/phpunit",
+        "test:php74": "@php -d memory_limit=512M vendor/bin/phpunit"
+    },
+    "config": {
+        "sort-packages": true,
+        "preferred-install": "dist",
+        "optimize-autoloader": true
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}
