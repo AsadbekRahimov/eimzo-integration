@@ -25,23 +25,52 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | API keys (domain authorization)
+    | API keys (per-domain authorisation)
     |--------------------------------------------------------------------------
     |
-    | E-IMZO desktop client requires a per-domain API key supplied via
-    | CAPIWS.apikey() before any cryptographic call. The default values cover
-    | localhost dev. Add your production domain alongside the key issued by
-    | the PKI Technical Center.
+    | E-IMZO desktop client requires a per-domain API key registered via
+    | CAPIWS.apikey() before any cryptographic call. The desktop client then
+    | rejects any request whose page host is not in the registered list.
+    |
+    | Three input formats are supported (see CONFIG.md):
+    |
+    |   1. Recommended map form (single env var, no order/pairing pitfalls):
+    |
+    |        EIMZO_API_KEYS="localhost=AAA...;127.0.0.1=BBB...;eimzo.test=CCC..."
+    |
+    |   2. Per-host env vars (best for secret managers / CI):
+    |
+    |        EIMZO_API_KEY_LOCALHOST=AAA...
+    |        EIMZO_API_KEY_127_0_0_1=BBB...
+    |        EIMZO_API_KEY_EIMZO_TEST=CCC...
+    |
+    |   3. Inline assoc array right here in the published config file:
+    |
+    |        'api_keys' => [
+    |            'localhost'   => 'AAA...',
+    |            '127.0.0.1'   => 'BBB...',
+    |            'eimzo.test'  => 'CCC...',
+    |        ],
+    |
+    | The legacy comma-pair form (`domain,key,domain,key,...`) is still
+    | accepted for backward compatibility with the upstream qo0p demo. The
+    | normalised list is filtered down to the request host before it ever
+    | reaches the browser - other domains' keys never leak.
+    |
+    | The defaults below are the publicly-published demo keys for localhost /
+    | 127.0.0.1 - safe for development, NOT valid for any production domain.
+    | Replace them with the keys issued for your domain by PKI Technical
+    | Centre (https://pki.gov.uz).
     |
     */
 
-    'api_keys' => array_values(array_filter(array_map(
-        'trim',
-        explode(',', (string) env('EIMZO_API_KEYS', implode(',', [
-            'localhost', '96D0C1491615C82B9A54D9989779DF825B690748224C2B04F500F370D51827CE2644D8D4A82C18184D73AB8530BB8ED537269603F61DB0D03D2104ABF789970B',
-            '127.0.0.1', 'A7BCFA5D490B351BE0754130DF03A068F855DB4333D43921125B9CF2670EF6A40370C646B90401955E1F7BC9CDBF59CE0B2C5467D820BE189C845D0B79CFC96F',
-        ])))
-    ))),
+    'api_keys' => \AsadbekRahimov\EimzoIntegration\Support\ApiKeyRegistry::normalize(
+        env('EIMZO_API_KEYS', implode(';', [
+            'localhost=96D0C1491615C82B9A54D9989779DF825B690748224C2B04F500F370D51827CE2644D8D4A82C18184D73AB8530BB8ED537269603F61DB0D03D2104ABF789970B',
+            '127.0.0.1=A7BCFA5D490B351BE0754130DF03A068F855DB4333D43921125B9CF2670EF6A40370C646B90401955E1F7BC9CDBF59CE0B2C5467D820BE189C845D0B79CFC96F',
+        ])),
+        array_merge(getenv() ?: [], $_ENV ?? [])
+    ),
 
     /*
     |--------------------------------------------------------------------------

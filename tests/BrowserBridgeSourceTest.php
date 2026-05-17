@@ -29,4 +29,25 @@ class BrowserBridgeSourceTest extends TestCase
         $this->assertStringContainsString('_findTokens2(itemIdGen, itemUiGen, items, errors, function (firstItmId3)', $listAllUserKeys);
         $this->assertStringNotContainsString('if(EIMZOClient.NEW_API2)', $listAllUserKeys);
     }
+
+    public function test_vendor_e_imzo_js_exposes_capiws_websocket_bridge_and_base64(): void
+    {
+        // Regression: the upstream e-imzo.js MUST contain both the Base64
+        // helper and the CAPIWS WebSocket bridge. If this file ever gets
+        // truncated again, EIMZOClient.checkVersion() / .createPkcs7() throw
+        // "CAPIWS is not loaded" / "Base64 is not defined" in the browser
+        // and the entire integration silently breaks.
+        $path = __DIR__.'/../resources/js/vendor/e-imzo.js';
+        $this->assertFileExists($path);
+
+        $source = file_get_contents($path);
+        $this->assertGreaterThan(2000, strlen($source), 'vendor/e-imzo.js looks truncated');
+
+        $this->assertStringContainsString('global.Base64 = {', $source);
+        $this->assertStringContainsString('CAPIWS', $source);
+        $this->assertStringContainsString('wss://127.0.0.1:64443', $source);
+        $this->assertStringContainsString('ws://127.0.0.1:64646', $source);
+        $this->assertStringContainsString("name: 'apikey'", $source);
+        $this->assertStringContainsString("name: 'version'", $source);
+    }
 }

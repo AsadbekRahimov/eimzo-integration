@@ -50,7 +50,12 @@
 </main>
 
 <script>
-    window.EIMZO_API_KEYS = @json(config('eimzo.api_keys', []));
+    // Only the API key registered for *this* page's host is exposed; other
+    // domains' keys never reach the browser. See ARCHITECTURE.md > "API keys".
+    window.EIMZO_API_KEYS = @json(\AsadbekRahimov\EimzoIntegration\Support\ApiKeyRegistry::resolveForHost(
+        config('eimzo.api_keys', []),
+        request()->getHost()
+    ));
 </script>
 <script src="{{ asset('vendor/eimzo/vendor/e-imzo.js') }}"></script>
 <script src="{{ asset('vendor/eimzo/vendor/e-imzo-client.js') }}"></script>

@@ -1,31 +1,31 @@
 # asadbekrahimov/eimzo-integration
 
-Laravel package for Uzbekistan E-IMZO authentication, PKCS#7 document signing, CRM action signing, verification, timestamping, and demo/example pages.
+Laravel-пакет для аутентификации через E-IMZO (Узбекистан), подписания документов в формате PKCS#7, подписания CRM-действий, верификации, временных меток (TSA) и набора готовых демо-страниц.
 
-The package contains:
+В пакет входит:
 
-- E-IMZO browser bridge assets.
-- Laravel routes and demo pages.
-- Backend services for E-IMZO-SERVER.
-- Models and migrations for challenges, certificates, and signatures.
-- Examples for login, document signing, and CRM action signing.
+- Браузерные мост-скрипты E-IMZO (CAPIWS + EIMZOClient + EimzoBridge).
+- Маршруты Laravel и демо-страницы.
+- Серверные сервисы для общения с E-IMZO-SERVER.
+- Модели и миграции для challenge’ов, сертификатов и подписей.
+- Готовые примеры: вход по подписи, подписание документа, подписание CRM-действия.
 
-## Requirements
+## Требования
 
 - PHP `^7.4|^8.0`
 - Laravel `^8.0|^9.0|^10.0`
-- E-IMZO desktop client on the user's computer
-- E-IMZO-SERVER Java service, either directly reachable or proxied through `/frontend`
+- E-IMZO desktop-клиент на ПК пользователя
+- Java-сервис E-IMZO-SERVER, доступный либо напрямую, либо через прокси `/frontend`
 
-`^8.0` includes PHP 8.1, 8.2, 8.3, and 8.4.
+`^8.0` включает PHP 8.1, 8.2, 8.3 и 8.4.
 
-## Installation
+## Установка
 
 ```bash
 composer require asadbekrahimov/eimzo-integration
 ```
 
-For local development before publishing to Packagist:
+Для локальной разработки до публикации в Packagist:
 
 ```json
 {
@@ -41,7 +41,7 @@ For local development before publishing to Packagist:
 }
 ```
 
-Publish config, migrations, views, and browser assets:
+Опубликовать конфиг, миграции, представления и браузерные ассеты:
 
 ```bash
 php artisan vendor:publish --tag=eimzo-config
@@ -50,13 +50,13 @@ php artisan vendor:publish --tag=eimzo-assets
 php artisan migrate
 ```
 
-Publishing views is optional:
+Публикация представлений необязательна:
 
 ```bash
 php artisan vendor:publish --tag=eimzo-views
 ```
 
-## Environment
+## Переменные окружения
 
 ```env
 EIMZO_SERVER_URL=http://185.xxx.xxx.123:8080
@@ -65,7 +65,7 @@ EIMZO_SERVER_TIMEOUT=20
 EIMZO_SERVER_CONNECT_TIMEOUT=3
 EIMZO_REQUEST_HOST=
 
-EIMZO_API_KEYS=localhost,LOCALHOST_KEY,127.0.0.1,LOCAL_IP_KEY,eimzo.test,YOUR_DOMAIN_KEY
+EIMZO_API_KEYS="localhost=96D0C1...;127.0.0.1=A7BCFA5D...;eimzo.test=YOUR_DOMAIN_KEY"
 
 EIMZO_CHALLENGE_TTL=120
 EIMZO_USER_MODEL=App\Models\User
@@ -87,16 +87,18 @@ EIMZO_ASSET_CACHE_SECONDS=3600
 EIMZO_LOCAL_PARSE=true
 ```
 
-If your nginx/OpenServer proxy exposes the Java service through `/frontend`, use:
+**Доменные API-ключи** выдаёт UZ PKI Technical Centre — демо-значения в `config/eimzo.php` действуют только для `localhost` / `127.0.0.1`. Рекомендуемая форма записи — карта `домен=ключ;домен=ключ`; также принимаются переменные на каждый хост `EIMZO_API_KEY_<HOST>` и устаревшая запятая-парами. Пакет автоматически отдаёт в браузер только ту запись, которая соответствует текущему хосту запроса. Полная справка — в [CONFIG.md](CONFIG.md). Прокси `/frontend` — опционально, см. [INTEGRATION.md § 5.2](INTEGRATION.md). Внутреннее устройство (CAPIWS, EIMZOClient, E-IMZO-SERVER) — в [ARCHITECTURE.md](ARCHITECTURE.md).
+
+Если ваш nginx/OpenServer проксирует Java-сервис через `/frontend`, используйте:
 
 ```env
 EIMZO_SERVER_URL=http://185.xxx.xxx.123:8080
 EIMZO_FRONTEND_URL=/frontend
 ```
 
-## Routes
+## Маршруты
 
-Web routes:
+Web-маршруты:
 
 - `GET /eimzo`
 - `GET /eimzo/login`
@@ -108,39 +110,39 @@ Web routes:
 - `POST /eimzo/sign`
 - `POST /eimzo/verify`
 
-API routes are mounted under `/api/eimzo` by default.
+API-маршруты по умолчанию монтируются под `/api/eimzo`.
 
-Browser assets are served through:
+Браузерные ассеты обслуживаются по адресам:
 
 - `/vendor/eimzo/vendor/e-imzo.js`
 - `/vendor/eimzo/vendor/e-imzo-client.js`
 - `/vendor/eimzo/eimzo.js`
 
-For production-like local servers, publish assets so nginx/apache can serve them as static JavaScript.
+Для production-подобных локальных серверов опубликуйте ассеты, чтобы nginx/apache мог отдавать их как статический JavaScript.
 
-## Examples
+## Примеры
 
-Open:
+Откройте:
 
 ```text
 /eimzo/examples
 ```
 
-Included examples:
+Включённые примеры:
 
-- Login by signed challenge.
-- Document signing.
-- CRM action signing with canonical JSON.
+- Вход по подписанному challenge.
+- Подписание документа.
+- Подписание CRM-действия с каноническим JSON.
 
-See [EXAMPLES.md](EXAMPLES.md) for database storage recommendations and flow details.
+Подробности по хранению в БД и потокам данных — в [EXAMPLES.md](EXAMPLES.md).
 
-For a step-by-step CRM drop-in guide, read [INTEGRATION.md](INTEGRATION.md).
+Пошаговую интеграцию в существующую CRM см. в [INTEGRATION.md](INTEGRATION.md).
 
-For the full feature reference (desktop + mobile API), read [USAGE.md](USAGE.md).
+Полный справочник возможностей (desktop + mobile API) — в [USAGE.md](USAGE.md).
 
-## CRM action signing
+## Подписание CRM-действий
 
-For CRM actions, the signed document should be canonical JSON generated by the backend, for example:
+Для CRM-действий подписываемый документ должен быть каноническим JSON, который сгенерировал бэкенд, например:
 
 ```json
 {
@@ -154,7 +156,7 @@ For CRM actions, the signed document should be canonical JSON generated by the b
 }
 ```
 
-Store your business meaning separately and link it to `eimzo_signatures.id`:
+Бизнес-смысл храните отдельно и связывайте с `eimzo_signatures.id`:
 
 ```text
 signed_actions
@@ -171,7 +173,7 @@ signed_actions
 - user_agent
 ```
 
-## Testing
+## Тестирование
 
 ```bash
 composer install
