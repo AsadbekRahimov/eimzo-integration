@@ -4,6 +4,7 @@ namespace AsadbekRahimov\EimzoIntegration\Tests;
 
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Config;
+use Illuminate\Support\Facades\Schema;
 use AsadbekRahimov\EimzoIntegration\Models\EimzoCertificate;
 use AsadbekRahimov\EimzoIntegration\Models\EimzoChallenge;
 use AsadbekRahimov\EimzoIntegration\Models\EimzoSignature;
@@ -94,6 +95,50 @@ class MobileFlowTest extends TestCase
         $this->assertSame(1, EimzoCertificate::count());
         $this->assertSame(1, EimzoSignature::count());
         $this->assertNotNull(EimzoChallenge::where('challenge', 'DOC123')->first()->used_at);
+    }
+
+    public function test_auth_complete_does_not_use_uid_as_an_implicit_user_lookup_fallback(): void
+    {
+        Schema::table('users', function ($table) {
+            $table->string('uid')->nullable()->index();
+        });
+        TestUser::create(['uid' => '400000000', 'name' => 'UID Match', 'email' => 'uid-mobile@example.test']);
+
+        $this->mockServer([
+            'mobileAuth' => [
+                'status' => 1,
+                'siteId' => '0001',
+                'documentId' => 'DOCUIDONLY',
+                'challange' => 'X',
+            ],
+            'mobileAuthenticate' => [
+                'status' => 1,
+                'subjectCertificateInfo' => [
+                    'serialNumber' => 'UIDMOBILE123',
+                    'subjectName' => [
+                        'CN' => 'UID Mobile User',
+                        'UID' => '400000000',
+                    ],
+                    'validFrom' => '2024-01-01 00:00:00',
+                    'validTo' => '2030-01-01 00:00:00',
+                ],
+            ],
+        ]);
+
+        $this->postJson('/eimzo/mobile/auth/start')->assertOk();
+
+        $response = $this->postJson('/eimzo/mobile/auth/complete', [
+            'document_id' => 'DOCUIDONLY',
+        ]);
+
+        $response->assertOk();
+        $this->assertSame(1, $response->json('status'));
+        $this->assertFalse((bool) $response->json('authenticated'));
+
+        $certificate = EimzoCertificate::first();
+        $this->assertSame('UIDMOBILE123', $certificate->serial_number);
+        $this->assertSame('400000000', $certificate->uid);
+        $this->assertNull($certificate->user_id);
     }
 
     public function test_auth_complete_rejects_unknown_document_id(): void

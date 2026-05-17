@@ -9,8 +9,10 @@ class Pkcs7TestFactory
         $openssl = self::opensslBinary();
         self::configureOpenSsl($openssl);
 
-        $tmp = sys_get_temp_dir() . '/eimzo_test_' . bin2hex(random_bytes(4));
-        @mkdir($tmp);
+        $tmp = self::tempRoot() . '/eimzo_test_' . bin2hex(random_bytes(4));
+        if (! @mkdir($tmp, 0777, true) && ! is_dir($tmp)) {
+            throw new \RuntimeException('Could not create temporary directory: ' . $tmp);
+        }
 
         try {
             $subj = '';
@@ -78,6 +80,21 @@ class Pkcs7TestFactory
         }
 
         throw new \RuntimeException('OpenSSL CLI was not found. Set OPENSSL_BINARY to an openssl executable.');
+    }
+
+    private static function tempRoot(): string
+    {
+        $root = sys_get_temp_dir();
+        if (is_dir($root) && is_writable($root)) {
+            return rtrim(str_replace('\\', '/', $root), '/');
+        }
+
+        $root = dirname(__DIR__, 2) . '/.phpunit-tmp';
+        if (! is_dir($root)) {
+            @mkdir($root, 0777, true);
+        }
+
+        return rtrim(str_replace('\\', '/', $root), '/');
     }
 
     private static function configureOpenSsl(string $openssl): void

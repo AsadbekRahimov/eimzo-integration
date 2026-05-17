@@ -29,7 +29,7 @@ abstract class TestCase extends Orchestra
         $app['config']->set('session.driver', 'array');
         $app['config']->set('cache.default', 'array');
         $app['config']->set('queue.default', 'sync');
-        $app['config']->set('eimzo.frontend_url', '/frontend');
+        $app['config']->set('eimzo.frontend_url', null);
         $app['config']->set('eimzo.server_url', 'http://127.0.0.1:8080');
         $app['config']->set('eimzo.auth.user_model', TestUser::class);
     }

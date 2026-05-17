@@ -333,24 +333,18 @@ class EimzoMobileService
     private function resolveUser(array $info): ?Authenticatable
     {
         $modelClass = config('eimzo.auth.user_model');
-        $column = config('eimzo.auth.user_lookup_column', 'tin');
+        $configuredColumn = (string) config('eimzo.auth.user_lookup_column', 'tin');
         if (! $modelClass || ! class_exists($modelClass)) {
             return null;
         }
 
-        $value = $info[$column] ?? null;
-        if (! is_string($value) || $value === '') {
-            foreach (['pinfl', 'tin', 'uid', 'serial_number'] as $alt) {
-                if (! empty($info[$alt])) {
-                    $column = $alt;
-                    $value = (string) $info[$alt];
-                    break;
-                }
-            }
-        }
-        if (! is_string($value) || $value === '') {
+        /** @var \Illuminate\Database\Eloquent\Model $model */
+        $model = new $modelClass;
+        $lookup = $this->resolveLookupCandidate($model->getTable(), $configuredColumn, $info);
+        if ($lookup === null) {
             return null;
         }
+        [$column, $value] = $lookup;
 
         /** @var \Illuminate\Database\Eloquent\Model $modelClass */
         $user = $modelClass::query()->where($column, $value)->first();
@@ -377,6 +371,39 @@ class EimzoMobileService
         }
 
         return $modelClass::query()->create($payload);
+    }
+
+    /**
+     * Pick a safe user lookup column. UID is intentionally not an implicit
+     * fallback; it is only used when configured explicitly.
+     *
+     * @return array{0:string,1:string}|null
+     */
+    private function resolveLookupCandidate(string $table, string $configuredColumn, array $info): ?array
+    {
+        $configuredColumn = trim($configuredColumn);
+        $candidates = [];
+
+        if ($configuredColumn !== '') {
+            $candidates[] = $configuredColumn;
+        }
+
+        foreach (['pinfl', 'tin', 'serial_number'] as $fallback) {
+            if ($fallback !== $configuredColumn) {
+                $candidates[] = $fallback;
+            }
+        }
+
+        foreach ($candidates as $column) {
+            $value = $info[$column] ?? null;
+            if (! is_string($value) || $value === '' || ! Schema::hasColumn($table, $column)) {
+                continue;
+            }
+
+            return [$column, $value];
+        }
+
+        return null;
     }
 
     private function touchUser(Authenticatable $user, array $info): void

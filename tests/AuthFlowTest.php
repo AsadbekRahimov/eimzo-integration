@@ -4,6 +4,7 @@ namespace AsadbekRahimov\EimzoIntegration\Tests;
 
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Config;
+use Illuminate\Support\Facades\Schema;
 use AsadbekRahimov\EimzoIntegration\Models\EimzoCertificate;
 use AsadbekRahimov\EimzoIntegration\Models\EimzoChallenge;
 use AsadbekRahimov\EimzoIntegration\Models\EimzoSignature;
@@ -91,6 +92,43 @@ class AuthFlowTest extends TestCase
         $this->assertSame('Test User', $certificate->cn);
         $this->assertSame('300000000', $certificate->tin);
         $this->assertSame('12345678901234', $certificate->pinfl);
+    }
+
+    public function test_verify_does_not_use_uid_as_an_implicit_user_lookup_fallback(): void
+    {
+        Config::set('eimzo.local_parse', false);
+        Schema::table('users', function ($table) {
+            $table->string('uid')->nullable()->index();
+        });
+        TestUser::create(['uid' => '400000000', 'name' => 'UID Match', 'email' => 'uid@example.test']);
+
+        $this->mockServerSuccess([
+            'status' => 1,
+            'message' => '',
+            'subjectCertificateInfo' => [
+                'serialNumber' => 'UIDONLY1234',
+                'subjectName' => [
+                    'CN' => 'UID Only User',
+                    'UID' => '400000000',
+                ],
+            ],
+        ]);
+
+        $issued = $this->getJson('/eimzo/auth/challenge')->json('challenge');
+
+        $response = $this->postJson('/eimzo/auth/verify', [
+            'challenge' => $issued,
+            'pkcs7' => 'AA==',
+        ]);
+
+        $response->assertOk();
+        $this->assertSame(1, $response->json('status'));
+        $this->assertFalse((bool) $response->json('authenticated'));
+
+        $certificate = EimzoCertificate::first();
+        $this->assertSame('UIDONLY1234', $certificate->serial_number);
+        $this->assertSame('400000000', $certificate->uid);
+        $this->assertNull($certificate->user_id);
     }
 
     private function mockServerSuccess(?array $authPayload = null): void

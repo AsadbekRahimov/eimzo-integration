@@ -107,7 +107,7 @@ EIMZO_API_KEYS="*=DEV-WIDE-KEY"
 
 ```env
 EIMZO_SERVER_URL=http://127.0.0.1:8080
-EIMZO_FRONTEND_URL=/frontend
+EIMZO_FRONTEND_URL=
 EIMZO_SERVER_TIMEOUT=20
 EIMZO_SERVER_CONNECT_TIMEOUT=3
 EIMZO_REQUEST_HOST=
@@ -116,7 +116,7 @@ EIMZO_REQUEST_HOST=
 | Переменная | Кто использует | Значение |
 |---|---|---|
 | `EIMZO_SERVER_URL` | PHP (server-to-server вызовы) | Базовый URL Java-сервиса `e-imzo-server.jar`. Должен быть достижим с вашего Laravel-сервера, **не** из браузера. |
-| `EIMZO_FRONTEND_URL` | Браузер-видимые эндпоинты (`/frontend/*`) | Если задан относительный путь вроде `/frontend`, браузер обращается на тот же origin, и nginx проксирует путь в Java-сервис. Если задан полный URL — браузер ходит туда напрямую (CORS должен разрешать). Если пусто — fallback на `EIMZO_SERVER_URL`. |
+| `EIMZO_FRONTEND_URL` | Frontend-группа Java endpoints (`/frontend/*`) | Обычно пусто: PHP вызывает `/frontend/*` прямо через `EIMZO_SERVER_URL`. Укажите `/frontend`, если PHP должен идти в Java через same-origin nginx/apache proxy. Укажите полный URL, если frontend-группа Java endpoints доступна отдельно, например `http://127.0.0.1:8080` или `http://proxy.local/frontend`. |
 | `EIMZO_SERVER_TIMEOUT` | Guzzle | Таймаут запроса к бэкенду. |
 | `EIMZO_SERVER_CONNECT_TIMEOUT` | Guzzle | Таймаут TCP-соединения. |
 | `EIMZO_REQUEST_HOST` | `EimzoServerClient::request()` | Опциональное переопределение заголовка `Host:`, отсылаемого Java-сервису; полезно, когда E-IMZO-SERVER мультиплексирует несколько SiteID по `Host`. |
@@ -134,10 +134,11 @@ location /frontend {
 }
 ```
 
-**Он нужен только если выполняются оба условия:**
+**Для этого пакета он не нужен по умолчанию.** Блок требуется только если вы сознательно выводите Java `/frontend/*` наружу:
 
-1. Браузер должен достучаться до Java-сервиса по эндпоинтам, обычно браузеру и предназначенным (например `/frontend/challenge`, `/frontend/timestamp/*`, `/frontend/mobile/upload`).
-2. Вы хотите, чтобы это происходило на **том же origin**, что и Laravel-приложение (тогда cookies, CSRF и same-origin policy остаются простыми).
+- Java upload URL для mobile ID-CARD должен быть публичным как `/frontend/mobile/upload`.
+- Ваш собственный frontend напрямую вызывает `/frontend/challenge`, `/frontend/timestamp/*` или другие frontend endpoints E-IMZO-SERVER.
+- PHP может достучаться до Java только через публичный proxy, а не напрямую по `EIMZO_SERVER_URL`.
 
 Если вы держите все вызовы на стороне сервера (по умолчанию пакет так и работает — PHP сам обращается к `EIMZO_SERVER_URL`), блок прокси **не нужен**. Просто оставьте `EIMZO_FRONTEND_URL` пустым:
 
@@ -148,7 +149,7 @@ EIMZO_FRONTEND_URL=
 
 Прокси **нужен**, если:
 
-- Вы выставляете URL приёма мобильной ID-CARD-загрузки в публичный интернет на собственном домене (`/frontend/mobile/upload`), и UZ PKI Technical Centre регистрирует именно его как target загрузки для вашего SiteID.
+- Вы выставляете Java upload URL в публичный интернет на собственном домене (`/frontend/mobile/upload`), и UZ PKI Technical Centre регистрирует именно его как target загрузки для вашего SiteID. Если используете Laravel upload route этого пакета (`/eimzo/mobile/upload`), прокси обычно не нужен.
 - Вы включаете любой браузерный хелпер, обращающийся напрямую к `/frontend/*` (например, когда CSP запрещает кросс-origin соединения).
 
 При сомнении: режим по умолчанию (только server-to-server) не требует никаких изменений в nginx.

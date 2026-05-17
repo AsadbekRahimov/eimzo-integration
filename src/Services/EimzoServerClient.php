@@ -349,7 +349,7 @@ class EimzoServerClient
         }
 
         $base = rtrim(trim($base), '/');
-        $suffix = strpos($path, '/frontend/') === 0
+        $suffix = $this->baseTargetsFrontendRoot($base) && strpos($path, '/frontend/') === 0
             ? substr($path, strlen('/frontend'))
             : '/' . ltrim($path, '/');
 
@@ -365,5 +365,14 @@ class EimzoServerClient
         }
 
         return $origin . '/' . trim($base, '/') . $suffix;
+    }
+
+    private function baseTargetsFrontendRoot(string $base): bool
+    {
+        $path = parse_url($base, PHP_URL_PATH);
+        $path = is_string($path) ? $path : $base;
+        $path = trim(str_replace('\\', '/', $path), '/');
+
+        return $path === 'frontend' || substr($path, -strlen('/frontend')) === '/frontend';
     }
 }

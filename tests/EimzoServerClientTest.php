@@ -44,4 +44,22 @@ class EimzoServerClientTest extends TestCase
         $this->assertSame(1, $response['status']);
         $this->assertSame(['http://185.74.4.123:8080/backend/auth'], $urls);
     }
+
+    public function test_absolute_frontend_root_keeps_frontend_endpoint_prefix(): void
+    {
+        Config::set('eimzo.server_url', 'http://185.74.4.123:8080');
+        Config::set('eimzo.frontend_url', 'http://127.0.0.1:8080');
+
+        $urls = [];
+        Http::fake(function ($request) use (&$urls) {
+            $urls[] = $request->url();
+
+            return Http::response(['challenge' => 'direct-java'], 200);
+        });
+
+        $response = (new EimzoServerClient(Http::getFacadeRoot()))->challenge('127.0.0.1');
+
+        $this->assertSame('direct-java', $response['challenge']);
+        $this->assertSame(['http://127.0.0.1:8080/frontend/challenge'], $urls);
+    }
 }

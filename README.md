@@ -15,7 +15,7 @@ Laravel-пакет для аутентификации через E-IMZO (Узб
 - PHP `^7.4|^8.0`
 - Laravel `^8.0|^9.0|^10.0`
 - E-IMZO desktop-клиент на ПК пользователя
-- Java-сервис E-IMZO-SERVER, доступный либо напрямую, либо через прокси `/frontend`
+- Java-сервис E-IMZO-SERVER, доступный вашему Laravel-серверу
 
 `^8.0` включает PHP 8.1, 8.2, 8.3 и 8.4.
 
@@ -60,7 +60,7 @@ php artisan vendor:publish --tag=eimzo-views
 
 ```env
 EIMZO_SERVER_URL=http://185.xxx.xxx.123:8080
-EIMZO_FRONTEND_URL=/frontend
+EIMZO_FRONTEND_URL=
 EIMZO_SERVER_TIMEOUT=20
 EIMZO_SERVER_CONNECT_TIMEOUT=3
 EIMZO_REQUEST_HOST=
@@ -89,12 +89,14 @@ EIMZO_LOCAL_PARSE=true
 
 **Доменные API-ключи** выдаёт UZ PKI Technical Centre — демо-значения в `config/eimzo.php` действуют только для `localhost` / `127.0.0.1`. Рекомендуемая форма записи — карта `домен=ключ;домен=ключ`; также принимаются переменные на каждый хост `EIMZO_API_KEY_<HOST>` и устаревшая запятая-парами. Пакет автоматически отдаёт в браузер только ту запись, которая соответствует текущему хосту запроса. Полная справка — в [CONFIG.md](CONFIG.md). Прокси `/frontend` — опционально, см. [INTEGRATION.md § 5.2](INTEGRATION.md). Внутреннее устройство (CAPIWS, EIMZOClient, E-IMZO-SERVER) — в [ARCHITECTURE.md](ARCHITECTURE.md).
 
-Если ваш nginx/OpenServer проксирует Java-сервис через `/frontend`, используйте:
+Если ваш nginx/OpenServer всё-таки проксирует Java-сервис через `/frontend`, используйте:
 
 ```env
 EIMZO_SERVER_URL=http://185.xxx.xxx.123:8080
 EIMZO_FRONTEND_URL=/frontend
 ```
+
+Для обычного использования пакета этот nginx-блок не нужен: браузер ходит в Laravel-маршруты `/eimzo/*`, а Laravel сам обращается к Java E-IMZO-SERVER.
 
 ## Маршруты
 

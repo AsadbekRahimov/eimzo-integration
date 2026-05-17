@@ -18,6 +18,8 @@ return [
     */
 
     'server_url' => env('EIMZO_SERVER_URL', 'http://127.0.0.1:8080'),
+    // Optional proxy/alternate base for Java endpoints under /frontend/*.
+    // Leave empty for the normal server-to-server flow via server_url.
     'frontend_url' => env('EIMZO_FRONTEND_URL'),
     'server_timeout' => env('EIMZO_SERVER_TIMEOUT', 20),
     'server_connect_timeout' => env('EIMZO_SERVER_CONNECT_TIMEOUT', 3),
