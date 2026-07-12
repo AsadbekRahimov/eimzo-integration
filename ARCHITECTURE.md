@@ -426,7 +426,7 @@ await eimzo.sign(key, {
 
 | # | Инвариант | Где обеспечивается |
 |---|---|---|
-| 1 | Подписанный challenge можно верифицировать только **один раз** | `eimzo_challenges.used_at`, выставляется в `EimzoAuthService::verifyChallenge()` |
+| 1 | Подписанный challenge можно верифицировать только **один раз** | `eimzo_challenges.used_at`, захватывается атомарным условным UPDATE в `EimzoAuthService::verifyChallenge()` (и в mobile-потоках) до записи результатов — конкурентный replay проигрывает гонку |
 | 2 | Подписанный challenge истекает по TTL | `eimzo_challenges.expires_at`, по умолчанию 120с |
 | 3 | PKCS#7 должен встраивать **те же** байты challenge, что были выпущены | `EimzoAuthService::verifyChallenge()` сравнивает `$payload['payload']['challenge']` с записью |
 | 4 | Подписной сертификат должен быть валиден на момент проверки против гос-PKI | E-IMZO-SERVER `/backend/auth` и `/backend/pkcs7/verify/*` (локальному парсингу для проверки доверия мы не верим) |

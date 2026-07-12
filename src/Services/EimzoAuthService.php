@@ -97,6 +97,13 @@ class EimzoAuthService
             throw new VerificationFailedException('Challenge mismatch in PKCS#7', $payload);
         }
 
+        // Claim the challenge atomically before persisting anything: of two
+        // concurrent requests replaying the same signed challenge only one
+        // can win the conditional UPDATE, so only one login ever succeeds.
+        if (! $row->markUsed()) {
+            throw new ChallengeExpiredException('Challenge already used');
+        }
+
         $info = config('eimzo.local_parse', true)
             ? $this->parser->parseSigner($pkcs7Base64)
             : [];
@@ -125,8 +132,6 @@ class EimzoAuthService
             'verified_at' => now(),
             'signed_at' => now(),
         ]);
-
-        $row->markUsed();
 
         if ($user instanceof Authenticatable) {
             $this->auth->guard(config('eimzo.auth.guard', 'web'))->login($user, true);

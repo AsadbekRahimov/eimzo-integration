@@ -122,10 +122,12 @@ Browser                  Laravel                   E-IMZO desktop          E-IMZ
    │                        │     SELECT * FROM users    │                       │
    │                        │     WHERE tin = ...        │                       │
    │                        │                            │                       │
-   │                        │  5. UPSERT certificate     │                       │
-   │                        │     INSERT signature       │                       │
-   │                        │     UPDATE challenge       │                       │
+   │                        │  5. UPDATE challenge       │                       │
    │                        │       SET used_at = NOW()  │                       │
+   │                        │       WHERE used_at IS NULL│                       │
+   │                        │     (atomik, 1 marta)      │                       │
+   │                        │     UPSERT certificate     │                       │
+   │                        │     INSERT signature       │                       │
    │                        │                            │                       │
    │                        │  6. Auth::login($user)     │                       │
    │ ◄───────────────────── │                            │                       │
@@ -245,14 +247,21 @@ public function verifyChallenge(string $challenge, string $pkcs7Base64, Request 
         throw new VerificationFailedException(/* ... */);
     }
 
-    // 3. Lokalda openssl yordamida certdan ma'lumot ajratamiz
+    // 3. Challenge ni atomik ravishda "ishlatilgan" deb belgilaymiz.
+    //    Shartli UPDATE (WHERE used_at IS NULL) tufayli parallel replay
+    //    so'rovlardan faqat bittasi yutadi (replay attack himoyasi).
+    if (! $row->markUsed()) {
+        throw new ChallengeExpiredException('Challenge already used');
+    }
+
+    // 4. Lokalda openssl yordamida certdan ma'lumot ajratamiz
     $info = $this->parser->parseSigner($pkcs7Base64);
     // $info = ['cn' => 'Asadbek Rahimov', 'tin' => '200000000', 'pinfl' => '...', ...]
 
-    // 4. users jadvalidan tegishli foydalanuvchini topamiz
+    // 5. users jadvalidan tegishli foydalanuvchini topamiz
     $user = $this->resolveUser($info);    // WHERE tin = $info['tin']
 
-    // 5. Sertifikat va imzoni saqlaymiz
+    // 6. Sertifikat va imzoni saqlaymiz
     $certificate = EimzoCertificate::upsertFromSigner($info, $user?->id);
     $signature = EimzoSignature::create([
         'certificate_id' => $certificate->id,
@@ -261,9 +270,6 @@ public function verifyChallenge(string $challenge, string $pkcs7Base64, Request 
         'verification_status' => 'valid',
         // ...
     ]);
-
-    // 6. Challenge ni "ishlatilgan" deb belgilaymiz (replay attack himoyasi)
-    $row->markUsed();
 
     // 7. Foydalanuvchini tizimga kiritamiz
     if ($user) {
@@ -289,7 +295,7 @@ Java backend (`e-imzo-server.jar`) PKCS#7 ni ochadi, sertifikatni davlat PKI ga 
 
 ### Replay attack-dan himoya
 
-Diqqat qiling: har bir challenge **bir martagina** ishlatish mumkin (`used_at` ustun) va **120 soniya** ichida (`expires_at`). Agar hujumchi imzolangan PKCS#7 ni ushlasa ham, qayta yuborolmaydi.
+Diqqat qiling: har bir challenge **bir martagina** ishlatish mumkin (`used_at` ustun, shartli UPDATE orqali atomik band qilinadi) va **120 soniya** ichida (`expires_at`). Agar hujumchi imzolangan PKCS#7 ni ushlasa ham, qayta yuborolmaydi — hatto ikkita parallel so'rovdan ham faqat bittasi muvaffaqiyatli bo'ladi.
 
 ---
 

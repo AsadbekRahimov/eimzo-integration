@@ -165,6 +165,41 @@ class AuthFlowTest extends TestCase
         $this->assertNull($certificate->user_id);
     }
 
+    public function test_verified_challenge_cannot_be_replayed(): void
+    {
+        $this->mockServerSuccess();
+
+        $issued = $this->getJson('/eimzo/auth/challenge')->json('challenge');
+        $pkcs7 = $this->loadSamplePkcs7();
+
+        $this->postJson('/eimzo/auth/verify', [
+            'challenge' => $issued,
+            'pkcs7' => $pkcs7,
+        ])->assertOk();
+
+        $replay = $this->postJson('/eimzo/auth/verify', [
+            'challenge' => $issued,
+            'pkcs7' => $pkcs7,
+        ]);
+
+        $replay->assertStatus(410);
+        $this->assertSame(-1, $replay->json('status'));
+        $this->assertSame(1, EimzoSignature::count());
+    }
+
+    public function test_mark_used_claims_the_challenge_atomically(): void
+    {
+        $row = EimzoChallenge::issue('auth');
+        // A second racing request holds its own stale copy of the row, read
+        // before either has claimed it - both pass isUsed(), only one wins.
+        $stale = EimzoChallenge::find($row->id);
+        $this->assertFalse($stale->isUsed());
+
+        $this->assertTrue($row->markUsed());
+        $this->assertFalse($stale->markUsed());
+        $this->assertNotNull($row->fresh()->used_at);
+    }
+
     private function mockServerSuccess(?array $authPayload = null): void
     {
         $this->app->singleton(EimzoServerClient::class, function () use ($authPayload) {

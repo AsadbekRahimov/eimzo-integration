@@ -183,7 +183,7 @@ mobile.storage.redis.db=1
 | POST    | `/eimzo/auth/verify`                 | Проверить подписанный challenge, залогинить |
 | POST    | `/eimzo/auth/logout`                 | Logout |
 | POST    | `/eimzo/sign`                        | Сохранить и проверить PKCS#7 |
-| GET     | `/eimzo/signatures/{id}`             | Получить подпись |
+| GET     | `/eimzo/signatures/{id}`             | Получить подпись (только владелец; расширяется policy) |
 | POST    | `/eimzo/verify`                      | Stateless-верификация PKCS#7 |
 | POST    | `/eimzo/timestamp/pkcs7`             | TSA-таймстамп для PKCS#7 |
 | POST    | `/eimzo/timestamp/data`              | TSA-таймстамп для произвольных данных |
@@ -673,8 +673,10 @@ try {
    стоите за nginx, убедитесь что он передаёт реальный IP в `X-Real-IP`.
 3. **CSRF** — все маршруты под `web` защищены, кроме `mobile/upload`
    (см. раздел установки).
-4. **One-time challenge** — `eimzo_challenges.used_at` помечается после
-   первой успешной верификации. Replay невозможен.
+4. **One-time challenge** — `eimzo_challenges.used_at` захватывается
+   атомарным условным UPDATE (`WHERE used_at IS NULL`) до записи
+   результатов. Даже при конкурентной повторной отправке того же
+   подписанного challenge успешным будет ровно один запрос.
 5. **Match-проверка** — `EimzoAuthService` проверяет, что подписанный
    challenge внутри PKCS#7 совпадает с тем, что выдал сервер.
 6. **OCSP** — выполняется в E-IMZO-SERVER через VPN. Если VPN недоступен,
@@ -684,7 +686,21 @@ try {
    сертификата.
 8. **Mobile DocumentID** — одноразовый, TTL = `EIMZO_CHALLENGE_TTL`.
    Полным аналогом nonce служит сам DocumentID, который мы храним в
-   `eimzo_challenges` со столь же одноразовой семантикой.
+   `eimzo_challenges` со столь же одноразовой семантикой (атомарный захват,
+   как и у desktop-challenge).
+9. **Доступ к подписям** — `GET /eimzo/signatures/{id}` отдаёт подпись
+   только её владельцу (`user_id` совпадает с аутентифицированным
+   пользователем); гости и чужие пользователи получают 403. Чтобы открыть
+   доступ бэк-офису или аудиторам, зарегистрируйте policy — она полностью
+   берёт решение на себя:
+
+   ```php
+   // AppServiceProvider::boot()
+   Gate::policy(
+       \AsadbekRahimov\EimzoIntegration\Models\EimzoSignature::class,
+       \App\Policies\EimzoSignaturePolicy::class   // метод view(?User $u, EimzoSignature $s)
+   );
+   ```
 
 ---
 

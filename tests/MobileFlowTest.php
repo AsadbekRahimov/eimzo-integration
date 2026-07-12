@@ -141,6 +141,41 @@ class MobileFlowTest extends TestCase
         $this->assertNull($certificate->user_id);
     }
 
+    public function test_auth_complete_cannot_be_replayed(): void
+    {
+        $this->mockServer([
+            'mobileAuth' => [
+                'status' => 1,
+                'siteId' => '0001',
+                'documentId' => 'DOCREPLAY',
+                'challange' => 'X',
+            ],
+            'mobileAuthenticate' => [
+                'status' => 1,
+                'subjectCertificateInfo' => [
+                    'serialNumber' => 'REPLAY123',
+                    'subjectName' => ['CN' => 'Replay User'],
+                    'validFrom' => '2024-01-01 00:00:00',
+                    'validTo' => '2030-01-01 00:00:00',
+                ],
+            ],
+        ]);
+
+        $this->postJson('/eimzo/mobile/auth/start')->assertOk();
+
+        $this->postJson('/eimzo/mobile/auth/complete', [
+            'document_id' => 'DOCREPLAY',
+        ])->assertOk();
+
+        $replay = $this->postJson('/eimzo/mobile/auth/complete', [
+            'document_id' => 'DOCREPLAY',
+        ]);
+
+        $replay->assertStatus(422);
+        $this->assertSame(-1, $replay->json('status'));
+        $this->assertSame(1, EimzoSignature::count());
+    }
+
     public function test_auth_complete_rejects_unknown_document_id(): void
     {
         $this->mockServer([]);
