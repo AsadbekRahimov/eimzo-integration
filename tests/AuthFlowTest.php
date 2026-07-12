@@ -94,6 +94,40 @@ class AuthFlowTest extends TestCase
         $this->assertSame('12345678901234', $certificate->pinfl);
     }
 
+    public function test_verify_persists_title_and_normalises_server_serial(): void
+    {
+        Config::set('eimzo.local_parse', false);
+        $this->mockServerSuccess([
+            'status' => 1,
+            'message' => '',
+            'subjectCertificateInfo' => [
+                'serialNumber' => '00abcd1234',
+                'subjectName' => [
+                    'CN' => 'Director User',
+                    'T' => 'DIRECTOR',
+                    'O' => 'ACME LLC',
+                    '1.2.860.3.16.1.1' => '301111111',
+                ],
+            ],
+        ]);
+
+        $issued = $this->getJson('/eimzo/auth/challenge')->json('challenge');
+
+        $response = $this->postJson('/eimzo/auth/verify', [
+            'challenge' => $issued,
+            'pkcs7' => 'AA==',
+        ]);
+
+        $response->assertOk();
+        $certificate = EimzoCertificate::first();
+        // Serial is normalised to the same canonical form the local parser
+        // uses (uppercase, no leading zeros) to avoid duplicate cert rows.
+        $this->assertSame('ABCD1234', $certificate->serial_number);
+        $this->assertSame('DIRECTOR', $certificate->t);
+        $this->assertSame('ACME LLC', $certificate->o);
+        $this->assertSame('301111111', $certificate->tin);
+    }
+
     public function test_verify_does_not_use_uid_as_an_implicit_user_lookup_fallback(): void
     {
         Config::set('eimzo.local_parse', false);

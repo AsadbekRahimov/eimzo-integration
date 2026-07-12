@@ -39,7 +39,7 @@ class EimzoSignController extends Controller
     {
         $data = $request->validate([
             'pkcs7' => ['required', 'string'],
-            'data' => ['nullable', 'string'],
+            'data' => ['nullable', 'string', 'required_if:detached,true'],
             'detached' => ['nullable', 'boolean'],
             'document_type' => ['nullable', 'string', 'max:64'],
             'document_name' => ['nullable', 'string', 'max:255'],
@@ -52,6 +52,10 @@ class EimzoSignController extends Controller
 
         try {
             $sig = $this->signer->store($data, $request);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json([
+                'status' => -1, 'message' => $e->getMessage(),
+            ], 422);
         } catch (VerificationFailedException $e) {
             return response()->json([
                 'status' => -1, 'message' => $e->getMessage(), 'payload' => $e->payload(),

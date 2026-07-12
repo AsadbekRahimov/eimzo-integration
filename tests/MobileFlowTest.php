@@ -229,6 +229,41 @@ class MobileFlowTest extends TestCase
         $this->assertSame(1, $r->json('status'));
     }
 
+    public function test_upload_is_also_reachable_at_the_reference_demo_root_path(): void
+    {
+        $captured = [];
+        $this->app->singleton(EimzoServerClient::class, function () use (&$captured) {
+            return new class($captured) extends EimzoServerClient {
+                public $captured;
+                public function __construct(&$captured)
+                {
+                    $this->captured = &$captured;
+                }
+                public function mobileUpload(string $rawBody, array $query = [], ?string $clientIp = null): array
+                {
+                    $this->captured['body'] = $rawBody;
+                    $this->captured['query'] = $query;
+                    return ['status' => 1];
+                }
+            };
+        });
+
+        // The upstream qo0p demo registers /frontend/mobile/upload at the
+        // domain root as the UPLOAD URL; the package exposes the same alias.
+        $r = $this->call(
+            'POST',
+            '/frontend/mobile/upload?DocumentID=ABC',
+            [],
+            [],
+            [],
+            ['CONTENT_TYPE' => 'text/plain'],
+            'BASE64-PKCS7'
+        );
+
+        $r->assertOk();
+        $this->assertSame(1, $r->json('status'));
+    }
+
     /**
      * Replace EimzoServerClient with a stub that returns the given payloads
      * for each method name.

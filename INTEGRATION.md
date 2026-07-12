@@ -11,7 +11,7 @@
 | Проверка | Команда | Ожидаемое |
 |---|---|---|
 | Версия PHP | `php -v` | `7.4.x` или новее |
-| Версия Laravel | `php artisan --version` | Laravel 8, 9 или 10 |
+| Версия Laravel | `php artisan --version` | Laravel 8 – 12 |
 | Расширение OpenSSL | `php -m` | в списке есть `openssl` |
 | База данных | `php artisan tinker` | `Schema::hasTable('users')` равен `true` |
 | Доступ на запись | права ОС | `storage/` и `bootstrap/cache/` доступны на запись |

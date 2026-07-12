@@ -62,7 +62,14 @@ class EimzoSignService
         $pkcs7WithTs = null;
         $timestampAt = null;
         if ($attachTimestamp) {
-            $tsResp = $this->server->timestampPkcs7($pkcs7, $request->ip());
+            // A TSA outage must not fail the signing request: the unstamped
+            // PKCS#7 is still stored and verified, and the error is recorded
+            // in meta.timestamp_error so it can be re-stamped later.
+            try {
+                $tsResp = $this->server->timestampPkcs7($pkcs7, $request->ip());
+            } catch (\AsadbekRahimov\EimzoIntegration\Exceptions\EimzoServerException $e) {
+                $tsResp = ['status' => -2, 'message' => $e->getMessage()];
+            }
             if (($tsResp['status'] ?? null) === 1) {
                 // E-IMZO-SERVER returns the timestamped envelope at the top level:
                 //   {"pkcs7b64":"...","timestampedSignerList":[...],"status":1}
@@ -105,7 +112,10 @@ class EimzoSignService
             ? EimzoCertificate::upsertFromSigner($info, $input['user_id'] ?? null)
             : null;
 
-        $rawData = $detached ? base64_decode((string) $data, true) : null;
+        // Hash whatever original data the caller supplied, for attached
+        // envelopes too - document_hash is what business tables (e.g.
+        // signed_actions.payload_hash) are matched against.
+        $rawData = is_string($data) && $data !== '' ? base64_decode($data, true) : null;
         if ($rawData === false) {
             $rawData = null;
         }

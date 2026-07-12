@@ -60,6 +60,24 @@ class EimzoServiceProvider extends ServiceProvider
         ], function () {
             $this->loadRoutesFrom($this->path('routes/api.php'));
         });
+
+        // Root-level alias matching the upstream qo0p demo upload path, so a
+        // SiteID registered with the "/frontend/mobile/upload" URL keeps
+        // working without an nginx proxy. Must be excluded from CSRF in the
+        // consuming app (see USAGE.md). An identically-named app route
+        // registered later overrides this one.
+        if (config('eimzo.mobile.enabled', true)) {
+            Route::group([
+                'middleware' => (array) config('eimzo.routes.middleware', ['web']),
+                'as' => 'eimzo.',
+            ], function () {
+                Route::match(
+                    ['get', 'post'],
+                    'frontend/mobile/upload',
+                    [\AsadbekRahimov\EimzoIntegration\Http\Controllers\EimzoMobileController::class, 'upload']
+                )->name('mobile.upload.root');
+            });
+        }
     }
 
     private function registerAssetRoutes(): void

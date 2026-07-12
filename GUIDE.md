@@ -79,12 +79,15 @@ Browser                  Laravel                   E-IMZO desktop          E-IMZ
    │                                                     │                       │
    │ 4. GET /eimzo/auth/challenge                        │                       │
    │ ─────────────────────► │                            │                       │
-   │                        │  EimzoChallenge::issue()   │                       │
-   │                        │  uuid + ttl=120s           │                       │
+   │                        │  GET /frontend/challenge   │                       │
+   │                        │ ─────────────────────────────────────────────────► │
+   │                        │ ◄───────────────────────────────────────────────── │
+   │                        │  {challenge: "<random>"}   │                       │
    │                        │  INSERT INTO               │                       │
    │                        │    eimzo_challenges        │                       │
+   │                        │  (ttl = 120s)              │                       │
    │ ◄───────────────────── │                            │                       │
-   │   {challenge: "uuid"}  │                            │                       │
+   │   {challenge}          │                            │                       │
    │                                                     │                       │
    │ 5. eimzo.signRaw(key, challenge, false)             │                       │
    │ ─────────────────────────────────────────────────► │                       │
@@ -143,7 +146,7 @@ Browser                  Laravel                   E-IMZO desktop          E-IMZ
 login(key) {
     return this.fetch(this.routes.challenge, { method: 'GET' })
         .then((res) => {
-            // res.challenge = "550e8400-e29b-41d4-a716-446655440000"
+            // res.challenge = E-IMZO-SERVER bergan tasodifiy qator
             return this.signRaw(key, res.challenge, false);
         });
     // ...
@@ -166,29 +169,31 @@ public function challenge(Request $request): JsonResponse
 }
 ```
 
-`EimzoAuthService::issueChallenge()` esa shunchaki bazaga yangi qator yozadi:
+`EimzoAuthService::issueChallenge()` avval E-IMZO-SERVER dan challenge oladi, keyin uni bazaga yozadi:
 
 ```php
 // asadbekrahimov/eimzo-integration/src/Services/EimzoAuthService.php
 public function issueChallenge(Request $request): EimzoChallenge
 {
-    return EimzoChallenge::issue('auth', $request->ip(), $request->userAgent());
-}
+    // 1. E-IMZO-SERVER dan tasodifiy challenge so'raymiz (GET /frontend/challenge)
+    $payload = $this->server->challenge($request->ip());
+    $challenge = $payload['challenge'] ?? null;
+    if (! is_string($challenge) || $challenge === '') {
+        throw new EimzoServerException('E-IMZO-SERVER did not return a challenge', $payload);
+    }
 
-// asadbekrahimov/eimzo-integration/src/Models/EimzoChallenge.php
-public static function issue(string $purpose, ?string $ip, ?string $userAgent): self
-{
-    return static::create([
-        'challenge' => (string) Str::uuid(),                  // tasodifiy UUID
-        'purpose' => $purpose,
-        'ip' => $ip,
-        'user_agent' => $userAgent,
-        'expires_at' => now()->addSeconds(120),               // 2 daqiqa
-    ]);
+    // 2. Bir martalik ishlatish + TTL nazorati uchun lokal bazaga yozamiz
+    return EimzoChallenge::issue(
+        'auth',
+        $request->ip(),
+        substr((string) $request->userAgent(), 0, 512),
+        ['server_payload' => $payload],
+        $challenge
+    );
 }
 ```
 
-Bu bilan biz UUID ni esda saqlab turamiz — bu raqibga qarshi himoya. Hujumchi imzolangan boshqa hech qaysi narsani qayta yuborolmaydi, chunki har bir login uchun yangi UUID kerak.
+Challenge server tomonida ham, lokal bazada ham esda saqlanadi — bu raqibga qarshi himoya. Hujumchi imzolangan boshqa hech qaysi narsani qayta yuborolmaydi, chunki har bir login uchun yangi challenge kerak va u bir marta ishlatilgach `used_at` bilan yopiladi.
 
 **2-qadam — challenge ni imzolash:**
 
@@ -365,12 +370,17 @@ public function store(array $input, Request $request): EimzoSignature
     $pkcs7 = $input['pkcs7'];
     $detached = (bool) ($input['detached'] ?? false);
 
-    // 1. TSA timestamp (ixtiyoriy, lekin tavsiya qilinadi)
+    // 1. TSA timestamp (ixtiyoriy, lekin tavsiya qilinadi).
+    //    TSA ishlamasa ham so'rov yiqilmaydi - xato meta.timestamp_error ga yoziladi.
     $pkcs7WithTs = null;
     if ($input['attach_timestamp'] ?? config('eimzo.sign.attach_timestamp')) {
-        $tsResp = $this->server->timestampPkcs7($pkcs7, $request->ip());
+        try {
+            $tsResp = $this->server->timestampPkcs7($pkcs7, $request->ip());
+        } catch (EimzoServerException $e) {
+            $tsResp = ['status' => -2, 'message' => $e->getMessage()];
+        }
         if (($tsResp['status'] ?? null) === 1) {
-            $pkcs7WithTs = $tsResp['payload']['pkcs7'] ?? null;
+            $pkcs7WithTs = $tsResp['pkcs7b64'] ?? ($tsResp['payload']['pkcs7b64'] ?? null);
         }
     }
 
@@ -526,8 +536,8 @@ Buning uchun openssl quyidagi funksiyalarni ishlatadi:
 | Ustun | Tip | Tushuntirish |
 |-------|-----|--------------|
 | id | bigint | PK |
-| challenge | uuid (unique) | Foydalanuvchi imzolaydigan tasodifiy qator |
-| purpose | string(32) | `auth` (kelajakda boshqa maqsadlar uchun) |
+| challenge | string(255) (unique) | Foydalanuvchi imzolaydigan tasodifiy qator (desktop: E-IMZO-SERVER challenge, mobil: DocumentID) |
+| purpose | string(32) | `auth`, `mobile-auth`, `mobile-sign` |
 | ip | string(45) | Challenge so'ralgan IP |
 | user_agent | string(512) | Audit uchun |
 | meta | json | Qo'shimcha ma'lumotlar |
@@ -947,7 +957,7 @@ $this->app->singleton(EimzoServerClient::class, fn () => new class extends Eimzo
 | <https://github.com/qo0p/e-imzo-doc> | E-IMZO rasmiy hujjati |
 | <https://test.e-imzo.uz/demo/> | Public demo (haqiqiy E-IMZO bilan ishlash misolllari) |
 | <https://e-imzo.uz/> | E-IMZO desktop client yuklab olish |
-| <https://pki.uz/> | PKI Technical Center — VPN kalitlari va api_keys uchun |
+| <https://pki.gov.uz/> | PKI Technical Center — VPN kalitlari va api_keys uchun |
 
 ---
 

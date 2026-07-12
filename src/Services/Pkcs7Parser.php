@@ -76,7 +76,7 @@ class Pkcs7Parser
             return $info;
         }
 
-        $parsed = openssl_x509_parse($resource, false);
+        $parsed = openssl_x509_parse($resource);
         if (! is_array($parsed)) {
             return $info;
         }
@@ -111,12 +111,17 @@ class Pkcs7Parser
             ?? X500NameParser::get($rdn, 'EMAIL')
             ?? X500NameParser::get($rdn, 'E');
         $info['uid'] = X500NameParser::get($rdn, 'UID');
-        $info['pinfl'] = X500NameParser::get($rdn, 'PINFL');
+        // Uzbek certificates carry TIN / PINFL under OIDs unknown to openssl,
+        // so the DN string keeps them in dotted-numeric form:
+        //   1.2.860.3.16.1.1 = INN/TIN, 1.2.860.3.16.1.2 = PINFL.
+        $info['pinfl'] = X500NameParser::get($rdn, 'PINFL')
+            ?? X500NameParser::get($rdn, '1.2.860.3.16.1.2');
         // INN / TIN are interchangeable Uzbek-tax-id labels. UID is a separate
         // certificate identifier and must NOT be used as a TIN fallback - it
         // would attach the cert to the wrong user record.
         $info['tin'] = X500NameParser::get($rdn, 'INN')
-            ?? X500NameParser::get($rdn, 'TIN');
+            ?? X500NameParser::get($rdn, 'TIN')
+            ?? X500NameParser::get($rdn, '1.2.860.3.16.1.1');
 
         if (isset($parsed['validFrom_time_t'])) {
             $info['valid_from'] = (new \DateTimeImmutable())->setTimestamp((int) $parsed['validFrom_time_t']);

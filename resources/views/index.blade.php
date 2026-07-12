@@ -3,7 +3,7 @@
 @section('content')
     <h1>E-IMZO Module</h1>
     <div class="card">
-        <p>This is the demo UI bundled with the <code>asadbekrahimov/eimzo-integration</code> module. It exercises the four
+        <p>This is the demo UI bundled with the <code>asadbekrahimov/eimzo-integration</code> module. It exercises the
             common flows of the Uzbekistan electronic-signature stack:</p>
         <ul>
             <li><a href="{{ route('eimzo.login.form') }}">Login</a> via signed challenge</li>

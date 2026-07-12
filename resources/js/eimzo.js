@@ -182,12 +182,15 @@
                 headers['Content-Type'] = 'application/json';
                 init.body = JSON.stringify(options.body);
             }
-            return fetch(url, init).then((r) => r.json().then((json) => {
-                if (!r.ok && (json && json.status !== 1)) {
+            return fetch(url, init).then((r) => r.json().catch(() => null).then((json) => {
+                if (!r.ok && !(json && json.status === 1)) {
                     const err = new Error((json && json.message) || ('HTTP ' + r.status));
                     err.payload = json;
                     err.status = r.status;
                     throw err;
+                }
+                if (json === null) {
+                    throw new Error('Non-JSON response from ' + url);
                 }
                 return json;
             }));

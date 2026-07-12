@@ -197,6 +197,7 @@ mobile.storage.redis.db=1
 | POST    | `/eimzo/mobile/sign/complete`        | Завершить мобильную подпись |
 | POST    | `/eimzo/mobile/upload`               | UPLOAD URL для ID-CARD |
 | GET/POST| `/eimzo/frontend/mobile/upload`      | Алиас для совместимости |
+| GET/POST| `/frontend/mobile/upload`            | Корневой алиас (путь из эталонного демо qo0p) |
 
 Те же эндпоинты доступны под `/api/eimzo/*` (guard `api`, без CSRF, без сессий).
 
@@ -459,7 +460,8 @@ HTTP-обёртки тех же операций: `POST /eimzo/timestamp/pkcs7`,
 ```html
 <script src="/vendor/eimzo/eimzo-mobile.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/qrcode/build/qrcode.min.js"></script>
-<!-- GostHash: либо из стандартного e-imzo.js, либо подгрузить отдельно -->
+<!-- GostHash НЕ входит в поставляемые vendor-скрипты: подключите gost-hash.js
+     отдельно (см. https://test.e-imzo.uz/demo/eimzoidcard) -->
 ```
 
 ```javascript
@@ -495,9 +497,11 @@ const sig = await m.waitAndCompleteSign(session.document_id, documentBase64, {
 siteId(4 hex) + documentId(8 hex) + gostHash34_11_94(64 hex) + CRC32(8 hex)
 ```
 
-`makeQrPayload()` собирает строку. Для GOST-хеша используется
-`global.GostHash` (входит в стандартный `e-imzo.js`). Если хеша нет —
-fallback на SHA-256 для отладки (мобильное приложение его не примет).
+`makeQrPayload()` собирает строку. Для GOST-хеша используется глобальный
+`GostHash` — он **не входит** в поставляемые vendor-скрипты, подключите
+`gost-hash.js` отдельно (образец — <https://test.e-imzo.uz/demo/eimzoidcard>).
+Если хеша нет — fallback на SHA-256 для отладки (мобильное приложение его
+не примет).
 
 ### UPLOAD URL
 
@@ -702,7 +706,7 @@ composer test
 - ExamplePages (smoke views)
 
 ```bash
-php vendor\bin\phpunit
+php vendor/bin/phpunit
 ```
 
 ---
