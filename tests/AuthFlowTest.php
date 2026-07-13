@@ -200,6 +200,99 @@ class AuthFlowTest extends TestCase
         $this->assertNotNull($row->fresh()->used_at);
     }
 
+    public function test_expired_challenge_cannot_be_claimed_atomically(): void
+    {
+        $row = EimzoChallenge::issue('auth');
+        $row->forceFill(['expires_at' => now()->subSecond()])->save();
+
+        $this->assertFalse($row->markUsed());
+        $this->assertNull($row->fresh()->used_at);
+    }
+
+    public function test_challenge_uses_shorter_upstream_ttl(): void
+    {
+        Config::set('eimzo.auth.challenge_ttl', 120);
+        $this->mockServerChallenge('short-lived-challenge', 30);
+
+        $response = $this->getJson('/eimzo/auth/challenge');
+
+        $response->assertOk();
+        $this->assertSame(30, $response->json('ttl'));
+        $row = EimzoChallenge::firstOrFail();
+        $this->assertSame(30, $row->meta['ttl']);
+        $this->assertLessThanOrEqual(30, now()->diffInSeconds($row->expires_at));
+    }
+
+    public function test_success_without_signer_certificate_is_rejected_without_consuming_challenge(): void
+    {
+        Config::set('eimzo.local_parse', false);
+        $this->mockServerSuccess(['status' => 1, 'message' => '']);
+
+        $issued = $this->getJson('/eimzo/auth/challenge')->json('challenge');
+        $response = $this->postJson('/eimzo/auth/verify', [
+            'challenge' => $issued,
+            'pkcs7' => 'AA==',
+        ]);
+
+        $response->assertStatus(503);
+        $this->assertSame(0, EimzoSignature::count());
+        $this->assertNull(EimzoChallenge::where('challenge', $issued)->firstOrFail()->used_at);
+    }
+
+    public function test_configured_inn_column_uses_certificate_tin_value(): void
+    {
+        Config::set('eimzo.local_parse', false);
+        Config::set('eimzo.auth.user_lookup_column', 'inn');
+        Schema::table('users', function ($table) {
+            $table->string('inn')->nullable()->index();
+        });
+        $user = TestUser::create(['inn' => '309999999', 'name' => 'INN User']);
+        $this->mockServerSuccess([
+            'status' => 1,
+            'subjectCertificateInfo' => [
+                'serialNumber' => 'INN-CERT',
+                'subjectName' => ['1.2.860.3.16.1.1' => '309999999'],
+            ],
+        ]);
+
+        $issued = $this->getJson('/eimzo/auth/challenge')->json('challenge');
+        $response = $this->postJson('/eimzo/auth/verify', [
+            'challenge' => $issued,
+            'pkcs7' => 'AA==',
+        ]);
+
+        $response->assertOk();
+        $this->assertTrue((bool) $response->json('authenticated'));
+        $this->assertSame($user->id, $response->json('user.id'));
+    }
+
+    public function test_serial_fallback_uses_default_eimzo_user_column(): void
+    {
+        Config::set('eimzo.local_parse', false);
+        Config::set('eimzo.auth.user_lookup_column', 'missing_column');
+        $user = TestUser::create([
+            'eimzo_serial_number' => 'SERIAL-FALLBACK',
+            'name' => 'Serial User',
+        ]);
+        $this->mockServerSuccess([
+            'status' => 1,
+            'subjectCertificateInfo' => [
+                'serialNumber' => 'SERIAL-FALLBACK',
+                'subjectName' => ['CN' => 'Serial User'],
+            ],
+        ]);
+
+        $issued = $this->getJson('/eimzo/auth/challenge')->json('challenge');
+        $response = $this->postJson('/eimzo/auth/verify', [
+            'challenge' => $issued,
+            'pkcs7' => 'AA==',
+        ]);
+
+        $response->assertOk();
+        $this->assertTrue((bool) $response->json('authenticated'));
+        $this->assertSame($user->id, $response->json('user.id'));
+    }
+
     private function mockServerSuccess(?array $authPayload = null): void
     {
         $this->app->singleton(EimzoServerClient::class, function () use ($authPayload) {
@@ -223,20 +316,29 @@ class AuthFlowTest extends TestCase
         });
     }
 
-    private function mockServerChallenge(string $challenge): void
+    private function mockServerChallenge(string $challenge, ?int $ttl = null): void
     {
-        $this->app->singleton(EimzoServerClient::class, function () use ($challenge) {
-            return new class($challenge) extends EimzoServerClient {
+        $this->app->singleton(EimzoServerClient::class, function () use ($challenge, $ttl) {
+            return new class($challenge, $ttl) extends EimzoServerClient {
                 private $challenge;
 
-                public function __construct(string $challenge)
+                private $ttl;
+
+                public function __construct(string $challenge, ?int $ttl)
                 {
                     $this->challenge = $challenge;
+                    $this->ttl = $ttl;
                 }
 
                 public function challenge(?string $ip = null): array
                 {
-                    return ['status' => 1, 'challenge' => $this->challenge];
+                    return array_filter([
+                        'status' => 1,
+                        'challenge' => $this->challenge,
+                        'ttl' => $this->ttl,
+                    ], static function ($value) {
+                        return $value !== null;
+                    });
                 }
             };
         });

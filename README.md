@@ -79,6 +79,12 @@ EIMZO_SIGN_MODE=attached
 EIMZO_STORAGE_DISK=local
 EIMZO_STORAGE_PATH=eimzo/signatures
 
+EIMZO_MOBILE_ENABLED=true
+EIMZO_MOBILE_SITE_ID=0001
+EIMZO_MOBILE_UPLOAD_URL=https://eimzo.test/eimzo/mobile/upload
+EIMZO_MOBILE_POLL_TIMEOUT=120
+EIMZO_MOBILE_POLL_INTERVAL_MS=1500
+
 EIMZO_ROUTES_ENABLED=true
 EIMZO_ROUTE_PREFIX=eimzo
 EIMZO_API_PREFIX=api/eimzo
@@ -96,7 +102,7 @@ EIMZO_SERVER_URL=http://185.xxx.xxx.123:8080
 EIMZO_FRONTEND_URL=/frontend
 ```
 
-Для обычного использования пакета этот nginx-блок не нужен: браузер ходит в Laravel-маршруты `/eimzo/*`, а Laravel сам обращается к Java E-IMZO-SERVER.
+Для обычного использования пакета этот nginx-блок не нужен: браузер ходит в Laravel-маршруты `/eimzo/*`, а Laravel сам обращается к Java E-IMZO-SERVER. Если `EIMZO_ROUTE_PREFIX` изменён, встроенные страницы автоматически передают фактические named-route URL в браузерный мост.
 
 ## Маршруты
 
@@ -120,6 +126,8 @@ Web-маршруты:
 - `GET|POST /eimzo/mobile/upload` (+ алиасы `/eimzo/frontend/mobile/upload` и корневой `/frontend/mobile/upload`)
 
 API-маршруты по умолчанию монтируются под `/api/eimzo`. Полная таблица маршрутов — в [USAGE.md](USAGE.md).
+
+При передаче уже закодированного бинарного документа в `EimzoBridge.sign()` укажите `dataIsBase64: true`; иначе строка будет воспринята как обычный UTF-8 текст и закодирована повторно.
 
 Браузерные ассеты обслуживаются по адресам:
 

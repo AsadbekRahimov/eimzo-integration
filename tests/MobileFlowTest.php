@@ -5,6 +5,7 @@ namespace AsadbekRahimov\EimzoIntegration\Tests;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Storage;
 use AsadbekRahimov\EimzoIntegration\Models\EimzoCertificate;
 use AsadbekRahimov\EimzoIntegration\Models\EimzoChallenge;
 use AsadbekRahimov\EimzoIntegration\Models\EimzoSignature;
@@ -34,6 +35,8 @@ class MobileFlowTest extends TestCase
         $this->assertSame('DOCAUTH1', $r->json('document_id'));
         $this->assertSame('0001', $r->json('site_id'));
         $this->assertSame('CHALLENGE-VALUE', $r->json('challenge'));
+        $this->assertSame(120, $r->json('poll_timeout'));
+        $this->assertSame(1500, $r->json('poll_interval_ms'));
 
         $row = EimzoChallenge::where('challenge', 'DOCAUTH1')->first();
         $this->assertNotNull($row);
@@ -191,6 +194,7 @@ class MobileFlowTest extends TestCase
     public function test_sign_complete_stores_timestamped_pkcs7(): void
     {
         Config::set('eimzo.local_parse', false);
+        Config::set('eimzo.sign.storage_disk', null);
         $this->mockServer([
             'mobileSign' => [
                 'status' => 1, 'siteId' => '0001', 'documentId' => 'SIGNDOC',
@@ -229,6 +233,168 @@ class MobileFlowTest extends TestCase
         $this->assertNotNull($sig->timestamp_at);
         $this->assertContains('1.2.3', $sig->meta['policy_identifiers']);
         $this->assertSame('SIGNDOC', $sig->meta['mobile_document_id']);
+    }
+
+    public function test_start_rejects_site_id_mismatch(): void
+    {
+        Config::set('eimzo.mobile.site_id', 'CONFIGURED');
+        $this->mockServer([
+            'mobileAuth' => [
+                'status' => 1,
+                'siteId' => 'SERVER',
+                'documentId' => 'MISMATCH',
+                'challange' => 'X',
+            ],
+        ]);
+
+        $response = $this->postJson('/eimzo/mobile/auth/start');
+
+        $response->assertStatus(503);
+        $this->assertSame(0, EimzoChallenge::count());
+    }
+
+    public function test_start_rejects_malformed_document_id_without_php_error(): void
+    {
+        $this->mockServer([
+            'mobileAuth' => [
+                'status' => 1,
+                'siteId' => '0001',
+                'documentId' => ['not-a-string'],
+                'challange' => 'X',
+            ],
+        ]);
+
+        $response = $this->postJson('/eimzo/mobile/auth/start');
+
+        $response->assertStatus(503);
+        $this->assertSame(0, EimzoChallenge::count());
+    }
+
+    public function test_sign_complete_rejects_invalid_base64_document(): void
+    {
+        Config::set('eimzo.sign.storage_disk', null);
+        $this->mockServer([
+            'mobileSign' => [
+                'status' => 1, 'siteId' => '0001', 'documentId' => 'BADBASE64',
+            ],
+        ]);
+
+        $this->postJson('/eimzo/mobile/sign/start')->assertOk();
+        $response = $this->postJson('/eimzo/mobile/sign/complete', [
+            'document_id' => 'BADBASE64',
+            'document' => 'not base64!',
+        ]);
+
+        $response->assertStatus(422);
+        $this->assertSame(0, EimzoSignature::count());
+        $this->assertNull(EimzoChallenge::where('challenge', 'BADBASE64')->firstOrFail()->used_at);
+    }
+
+    public function test_mobile_sign_writes_timestamped_binary_to_configured_disk(): void
+    {
+        Config::set('eimzo.local_parse', false);
+        Config::set('eimzo.sign.storage_disk', 'mobile-test');
+        Config::set('eimzo.sign.storage_path', 'signed');
+        Storage::fake('mobile-test');
+
+        $timestamped = base64_encode('timestamped-envelope');
+        $this->mockServer([
+            'mobileSign' => [
+                'status' => 1, 'siteId' => '0001', 'documentId' => 'STORE-DOC',
+            ],
+            'mobileVerify' => [
+                'status' => 1,
+                'pkcs7Attached' => $timestamped,
+            ],
+        ]);
+
+        $this->postJson('/eimzo/mobile/sign/start')->assertOk();
+        $this->postJson('/eimzo/mobile/sign/complete', [
+            'document_id' => 'STORE-DOC',
+            'document' => base64_encode('hello'),
+        ])->assertOk();
+
+        $signature = EimzoSignature::firstOrFail();
+        $this->assertSame('signed/'.$signature->id.'.p7', $signature->pkcs7_path);
+        Storage::disk('mobile-test')->assertExists($signature->pkcs7_path);
+        $this->assertSame('timestamped-envelope', Storage::disk('mobile-test')->get($signature->pkcs7_path));
+    }
+
+    public function test_mobile_sign_rejects_success_without_attached_envelope(): void
+    {
+        Config::set('eimzo.local_parse', false);
+        Config::set('eimzo.sign.storage_disk', null);
+        $this->mockServer([
+            'mobileSign' => [
+                'status' => 1, 'siteId' => '0001', 'documentId' => 'NO-PKCS7',
+            ],
+            'mobileVerify' => ['status' => 1],
+        ]);
+
+        $this->postJson('/eimzo/mobile/sign/start')->assertOk();
+        $response = $this->postJson('/eimzo/mobile/sign/complete', [
+            'document_id' => 'NO-PKCS7',
+            'document' => base64_encode('hello'),
+        ]);
+
+        $response->assertStatus(503);
+        $this->assertSame(0, EimzoSignature::count());
+        $this->assertNull(EimzoChallenge::where('challenge', 'NO-PKCS7')->firstOrFail()->used_at);
+    }
+
+    public function test_mobile_auth_rejects_success_without_signer_certificate(): void
+    {
+        $this->mockServer([
+            'mobileAuth' => [
+                'status' => 1,
+                'siteId' => '0001',
+                'documentId' => 'NO-CERT1',
+                'challange' => 'X',
+            ],
+            'mobileAuthenticate' => ['status' => 1],
+        ]);
+
+        $this->postJson('/eimzo/mobile/auth/start')->assertOk();
+        $response = $this->postJson('/eimzo/mobile/auth/complete', [
+            'document_id' => 'NO-CERT1',
+        ]);
+
+        $response->assertStatus(503);
+        $this->assertSame(0, EimzoSignature::count());
+        $this->assertNull(EimzoChallenge::where('challenge', 'NO-CERT1')->firstOrFail()->used_at);
+    }
+
+    public function test_mobile_auth_serial_fallback_uses_default_eimzo_user_column(): void
+    {
+        Config::set('eimzo.auth.user_lookup_column', 'missing_column');
+        $user = TestUser::create([
+            'eimzo_serial_number' => 'MOBILE-SERIAL',
+            'name' => 'Mobile Serial User',
+        ]);
+        $this->mockServer([
+            'mobileAuth' => [
+                'status' => 1,
+                'siteId' => '0001',
+                'documentId' => 'SERIAL01',
+                'challange' => 'X',
+            ],
+            'mobileAuthenticate' => [
+                'status' => 1,
+                'subjectCertificateInfo' => [
+                    'serialNumber' => 'MOBILE-SERIAL',
+                    'subjectName' => ['CN' => 'Mobile Serial User'],
+                ],
+            ],
+        ]);
+
+        $this->postJson('/eimzo/mobile/auth/start')->assertOk();
+        $response = $this->postJson('/eimzo/mobile/auth/complete', [
+            'document_id' => 'SERIAL01',
+        ]);
+
+        $response->assertOk();
+        $this->assertTrue((bool) $response->json('authenticated'));
+        $this->assertSame($user->id, $response->json('user.id'));
     }
 
     public function test_upload_relays_raw_body_to_server(): void

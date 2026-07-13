@@ -49,6 +49,32 @@
     @yield('content')
 </main>
 
+@php
+    $eimzoRoutes = [
+        'challenge' => route('eimzo.auth.challenge'),
+        'verify' => route('eimzo.auth.verify'),
+        'logout' => route('eimzo.auth.logout'),
+        'sign' => route('eimzo.sign.store'),
+        'verifySignature' => route('eimzo.verify.store'),
+        'timestampPkcs7' => route('eimzo.timestamp.pkcs7'),
+        'timestampData' => route('eimzo.timestamp.data'),
+        'makeAttached' => route('eimzo.pkcs7.make-attached'),
+        'join' => route('eimzo.pkcs7.join'),
+    ];
+    $eimzoDefaultDetached = strtolower((string) config('eimzo.sign.default_mode', 'attached')) === 'detached';
+    $eimzoMobileConfig = config('eimzo.mobile.enabled', true) ? [
+        'routes' => [
+            'authStart' => route('eimzo.mobile.auth.start'),
+            'authStatus' => route('eimzo.mobile.auth.status'),
+            'authComplete' => route('eimzo.mobile.auth.complete'),
+            'signStart' => route('eimzo.mobile.sign.start'),
+            'signStatus' => route('eimzo.mobile.sign.status'),
+            'signComplete' => route('eimzo.mobile.sign.complete'),
+        ],
+        'pollIntervalMs' => (int) config('eimzo.mobile.poll_interval_ms', 1500),
+        'pollTimeoutMs' => (int) config('eimzo.mobile.poll_timeout', 120) * 1000,
+    ] : null;
+@endphp
 <script>
     // Only the API key registered for *this* page's host is exposed; other
     // domains' keys never reach the browser. See ARCHITECTURE.md > "API keys".
@@ -56,6 +82,11 @@
         config('eimzo.api_keys', []),
         request()->getHost()
     ));
+    window.EIMZO_ROUTES = @json($eimzoRoutes);
+    window.EIMZO_SIGN_DEFAULT_DETACHED = @json($eimzoDefaultDetached);
+    @if($eimzoMobileConfig !== null)
+    window.EIMZO_MOBILE_CONFIG = @json($eimzoMobileConfig);
+    @endif
 </script>
 <script src="{{ asset('vendor/eimzo/vendor/e-imzo.js') }}"></script>
 <script src="{{ asset('vendor/eimzo/vendor/e-imzo-client.js') }}"></script>

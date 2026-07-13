@@ -51,9 +51,11 @@
                 certSelect.appendChild(opt);
             });
             certCard.style.display = 'block';
-            installStatus.innerHTML = '<span class="ok">' + keys.length + ' key(s) found</span>';
+            installStatus.className = 'ok';
+            installStatus.textContent = keys.length + ' key(s) found';
         } catch (e) {
-            installStatus.innerHTML = '<span class="err">' + e.message + '</span>';
+            installStatus.className = 'err';
+            installStatus.textContent = e.message;
             installBtn.disabled = false;
         }
     });
@@ -64,14 +66,16 @@
         try {
             const key = keys[Number(certSelect.value)];
             const res = await eimzo.login(key);
-            loginStatus.innerHTML = '<span class="ok">Logged in</span>';
+            loginStatus.className = 'ok';
+            loginStatus.textContent = 'Logged in';
             resultCard.style.display = 'block';
             resultPre.textContent = JSON.stringify(res, null, 2);
             if (res.redirect) {
                 setTimeout(() => { window.location.href = res.redirect; }, 1200);
             }
         } catch (e) {
-            loginStatus.innerHTML = '<span class="err">' + e.message + '</span>';
+            loginStatus.className = 'err';
+            loginStatus.textContent = e.message;
             loginBtn.disabled = false;
         }
     });

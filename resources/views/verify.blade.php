@@ -34,13 +34,13 @@
         status.textContent = 'Verifying...';
         try {
             const res = await eimzo.verify({ pkcs7, data: data || undefined });
-            status.innerHTML = res.status === 1
-                ? '<span class="ok">valid</span>'
-                : '<span class="err">invalid: ' + (res.message || '') + '</span>';
+            status.className = res.status === 1 ? 'ok' : 'err';
+            status.textContent = res.status === 1 ? 'valid' : 'invalid: ' + (res.message || '');
             resultCard.style.display = 'block';
             resultPre.textContent = JSON.stringify(res, null, 2);
         } catch (e) {
-            status.innerHTML = '<span class="err">' + e.message + '</span>';
+            status.className = 'err';
+            status.textContent = e.message;
         }
     });
 </script>

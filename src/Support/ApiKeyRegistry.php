@@ -37,7 +37,7 @@ namespace AsadbekRahimov\EimzoIntegration\Support;
  *     hard-code an associative array `['localhost' => 'KEY', ...]` or a flat
  *     pair list `['localhost', 'KEY', '127.0.0.1', 'KEY']`, both work.
  *
- * The browser-side SDK requires the page's `window.location.host` to appear
+ * The browser-side SDK requires the page's `window.location.hostname` to appear
  * verbatim in the registered list, so {@see filterForHost()} filters the
  * registry down to the entry that matches the request host before it is
  * shipped to the browser - other domains' keys are never exposed.

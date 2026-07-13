@@ -4,6 +4,7 @@ namespace AsadbekRahimov\EimzoIntegration\Tests;
 
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Config;
+use Illuminate\Support\Facades\Storage;
 use AsadbekRahimov\EimzoIntegration\Exceptions\EimzoServerException;
 use AsadbekRahimov\EimzoIntegration\Models\EimzoSignature;
 use AsadbekRahimov\EimzoIntegration\Services\EimzoServerClient;
@@ -19,7 +20,11 @@ class SignFlowTest extends TestCase
         Config::set('eimzo.sign.storage_disk', null);
         $this->mockServer([
             'timestampPkcs7' => ['status' => 1, 'pkcs7b64' => 'PKCS7-WITH-TS', 'timestampedSignerList' => [['timestamp' => '2026-05-01 10:00:05']]],
-            'verifyAttached' => ['status' => 1, 'message' => ''],
+            'verifyAttached' => [
+                'status' => 1,
+                'message' => '',
+                'pkcs7Info' => ['documentBase64' => base64_encode('contract')],
+            ],
         ]);
 
         $r = $this->postJson('/eimzo/sign', [
@@ -44,7 +49,11 @@ class SignFlowTest extends TestCase
         Config::set('eimzo.sign.storage_disk', null);
         $this->mockServer([
             'timestampPkcs7' => new EimzoServerException('E-IMZO-SERVER unreachable: timeout', ['path' => '/frontend/timestamp/pkcs7']),
-            'verifyAttached' => ['status' => 1, 'message' => ''],
+            'verifyAttached' => [
+                'status' => 1,
+                'message' => '',
+                'pkcs7Info' => ['documentBase64' => base64_encode('contract')],
+            ],
         ]);
 
         $r = $this->postJson('/eimzo/sign', [
@@ -168,6 +177,141 @@ class SignFlowTest extends TestCase
         $r->assertStatus(422);
         $this->assertSame(-1, $r->json('status'));
         $this->assertSame(EimzoSignature::STATUS_INVALID, EimzoSignature::first()->verification_status);
+    }
+
+    public function test_attached_valid_response_without_embedded_document_is_rejected(): void
+    {
+        Config::set('eimzo.local_parse', false);
+        Config::set('eimzo.sign.storage_disk', null);
+        $this->mockServer([
+            'verifyAttached' => ['status' => 1, 'message' => ''],
+        ]);
+
+        $r = $this->postJson('/eimzo/sign', [
+            'pkcs7' => base64_encode('envelope'),
+            'attach_timestamp' => false,
+        ]);
+
+        $r->assertStatus(503);
+        $this->assertSame(0, EimzoSignature::count());
+    }
+
+    public function test_server_signer_is_stored_when_local_parsing_is_disabled(): void
+    {
+        Config::set('eimzo.local_parse', false);
+        Config::set('eimzo.sign.storage_disk', null);
+        $this->mockServer([
+            'verifyAttached' => [
+                'status' => 1,
+                'pkcs7Info' => [
+                    'documentBase64' => base64_encode('contract'),
+                    'signers' => [[
+                        'certificate' => [[
+                            'serialNumber' => '00ab12',
+                            'subjectName' => [
+                                'CN' => 'TEST USER',
+                                '1.2.860.3.16.1.2' => '30101010010010',
+                            ],
+                        ]],
+                    ]],
+                ],
+            ],
+        ]);
+
+        $r = $this->postJson('/eimzo/sign', [
+            'pkcs7' => base64_encode('envelope'),
+            'attach_timestamp' => false,
+        ]);
+
+        $r->assertOk();
+        $signature = EimzoSignature::with('certificate')->firstOrFail();
+        $this->assertSame('AB12', $signature->certificate->serial_number);
+        $this->assertSame('TEST USER', $signature->certificate->cn);
+        $this->assertSame('30101010010010', $signature->certificate->pinfl);
+        $this->assertNotNull($signature->certificate->last_verified_at);
+    }
+
+    public function test_configured_detached_mode_is_used_when_request_omits_mode(): void
+    {
+        Config::set('eimzo.local_parse', false);
+        Config::set('eimzo.sign.default_mode', 'detached');
+        Config::set('eimzo.sign.storage_disk', null);
+        $this->mockServer([
+            'verifyDetached' => ['status' => 1, 'message' => ''],
+        ]);
+
+        $r = $this->postJson('/eimzo/sign', [
+            'pkcs7' => base64_encode('envelope'),
+            'data' => base64_encode('contract'),
+            'attach_timestamp' => false,
+        ]);
+
+        $r->assertOk();
+        $this->assertTrue(EimzoSignature::firstOrFail()->detached);
+    }
+
+    public function test_malformed_successful_timestamp_response_is_not_treated_as_timestamped(): void
+    {
+        Config::set('eimzo.local_parse', false);
+        Config::set('eimzo.sign.storage_disk', null);
+        $this->mockServer([
+            'timestampPkcs7' => ['status' => 1],
+            'verifyAttached' => [
+                'status' => 1,
+                'pkcs7Info' => ['documentBase64' => base64_encode('contract')],
+            ],
+        ]);
+
+        $r = $this->postJson('/eimzo/sign', [
+            'pkcs7' => base64_encode('envelope'),
+            'attach_timestamp' => true,
+        ]);
+
+        $r->assertOk();
+        $signature = EimzoSignature::firstOrFail();
+        $this->assertNull($signature->pkcs7_with_timestamp);
+        $this->assertNull($signature->timestamp_at);
+        $this->assertStringContainsString('without timestamped PKCS#7', $signature->meta['timestamp_error']);
+    }
+
+    public function test_detached_sign_rejects_invalid_base64_data(): void
+    {
+        Config::set('eimzo.sign.storage_disk', null);
+        $this->mockServer([]);
+
+        $r = $this->postJson('/eimzo/sign', [
+            'pkcs7' => base64_encode('envelope'),
+            'data' => 'not base64!',
+            'detached' => true,
+            'attach_timestamp' => false,
+        ]);
+
+        $r->assertStatus(422);
+        $this->assertSame(0, EimzoSignature::count());
+    }
+
+    public function test_binary_storage_does_not_confuse_decoded_zero_string_with_failure(): void
+    {
+        Config::set('eimzo.local_parse', false);
+        Config::set('eimzo.sign.storage_disk', 'sign-test');
+        Config::set('eimzo.sign.storage_path', 'signed');
+        Storage::fake('sign-test');
+        $this->mockServer([
+            'verifyAttached' => [
+                'status' => 1,
+                'pkcs7Info' => ['documentBase64' => base64_encode('contract')],
+            ],
+        ]);
+
+        $response = $this->postJson('/eimzo/sign', [
+            'pkcs7' => base64_encode('0'),
+            'attach_timestamp' => false,
+        ]);
+
+        $response->assertOk();
+        $signature = EimzoSignature::firstOrFail();
+        Storage::disk('sign-test')->assertExists($signature->pkcs7_path);
+        $this->assertSame('0', Storage::disk('sign-test')->get($signature->pkcs7_path));
     }
 
     /**

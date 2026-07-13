@@ -38,15 +38,18 @@ class EimzoChallenge extends Model
         ?string $ip = null,
         ?string $userAgent = null,
         ?array $meta = null,
-        ?string $challenge = null
+        ?string $challenge = null,
+        ?int $ttlSeconds = null
     ): self {
+        $ttlSeconds = $ttlSeconds ?? (int) config('eimzo.auth.challenge_ttl', 120);
+
         return static::create([
             'challenge' => $challenge ?: (string) Str::uuid(),
             'purpose' => $purpose,
             'ip' => $ip,
             'user_agent' => $userAgent,
             'meta' => $meta,
-            'expires_at' => now()->addSeconds((int) config('eimzo.auth.challenge_ttl', 120)),
+            'expires_at' => now()->addSeconds(max(1, $ttlSeconds)),
         ]);
     }
 
@@ -71,6 +74,7 @@ class EimzoChallenge extends Model
         $claimed = static::query()
             ->whereKey($this->getKey())
             ->whereNull('used_at')
+            ->where('expires_at', '>', $now)
             ->update(['used_at' => $now]) === 1;
 
         if ($claimed) {

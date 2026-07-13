@@ -319,7 +319,10 @@ class EimzoServerClient
 
         $host = config('eimzo.request_host') ?: (function () {
             try {
-                return request()->getHttpHost();
+                // E-IMZO identifies the registered site by domain. A local
+                // development port is transport metadata and must not become
+                // part of the SiteID lookup performed by the Java server.
+                return request()->getHost();
             } catch (\Throwable $e) {
                 return null;
             }

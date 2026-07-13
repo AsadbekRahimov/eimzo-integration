@@ -169,9 +169,9 @@ EIMZO_REDIRECT_AFTER_LOGIN=/
 
 | Переменная | Заметки |
 |---|---|
-| `EIMZO_CHALLENGE_TTL` | Секунды. Выпущенные challenge’и истекают через это время. По умолчанию 120 — совпадает со встроенным TTL E-IMZO-SERVER. |
+| `EIMZO_CHALLENGE_TTL` | Максимальный TTL в секундах. Если E-IMZO-SERVER вернул меньший положительный `ttl`, пакет использует его; по умолчанию максимум равен 120. |
 | `EIMZO_USER_MODEL` | Eloquent-модель, реализующая `Authenticatable`. |
-| `EIMZO_USER_LOOKUP_COLUMN` | Колонка в таблице пользователей, где хранится `TIN` / `INN` / `PINFL` сертификата. Если эта колонка пуста, сервис аутентификации в порядке убывания пробует `pinfl` → `tin` → `uid` → `serial_number`. |
+| `EIMZO_USER_LOOKUP_COLUMN` | Предпочтительная колонка в таблице пользователей (`tin`, `inn`, `pinfl`, `eimzo_serial_number` и т. п.). `inn` сопоставляется с TIN сертификата, а `eimzo_serial_number` — с его serial. Если выбранное поле недоступно, сервис пробует колонки `pinfl` → `tin`/`inn` → `eimzo_serial_number`/`serial_number`. `uid` намеренно не используется неявно; включить его можно только явно. |
 | `EIMZO_AUTO_REGISTER` | Если `true`, неизвестный подписант создаётся автоматически при первом входе. **Включайте, только если у вас есть процесс валидации автосозданного пользователя.** |
 | `EIMZO_AUTH_GUARD` | Гард `auth`, на котором вызывается `login()`. |
 | `EIMZO_REDIRECT_AFTER_LOGIN` | Возвращается JS-слою как `result.redirect`. |
@@ -187,9 +187,9 @@ EIMZO_STORAGE_DISK=local
 EIMZO_STORAGE_PATH=eimzo/signatures
 ```
 
-`EIMZO_SIGN_MODE` — режим по умолчанию для `EimzoBridge.sign({ detached })`; ставьте `detached`, если CRM хранит документ отдельно от подписи.
+`EIMZO_SIGN_MODE` — режим по умолчанию для `EimzoBridge.sign()` и серверного `EimzoSignService`, когда параметр `detached` не передан. Ставьте `detached`, если CRM хранит документ отдельно от подписи.
 
-Когда `EIMZO_STORAGE_DISK` не пуст, каждый PKCS#7 дополнительно сохраняется как бинарный `.p7`-файл под `EIMZO_STORAGE_PATH`. Чтобы оставить подписи только в таблице `eimzo_signatures`, оставьте диск пустым.
+Когда `EIMZO_STORAGE_DISK` не пуст, desktop- и mobile-подписи дополнительно сохраняются как бинарные `.p7`-файлы под `EIMZO_STORAGE_PATH`. Чтобы оставить подписи только в таблице `eimzo_signatures`, оставьте диск пустым.
 
 ---
 
@@ -203,7 +203,7 @@ EIMZO_MOBILE_POLL_TIMEOUT=120
 EIMZO_MOBILE_POLL_INTERVAL_MS=1500
 ```
 
-`EIMZO_MOBILE_SITE_ID` должен совпадать с SiteID, который UZ PKI Technical Centre зарегистрировал для вашего домена. `EIMZO_MOBILE_UPLOAD_URL` — публичный URL, по которому ID-CARD-приложение POST’ит подписанный PKCS#7.
+`EIMZO_MOBILE_ENABLED=false` полностью убирает web/API mobile-маршруты и корневой upload-алиас. `EIMZO_MOBILE_SITE_ID` должен совпадать с SiteID, который UZ PKI Technical Centre зарегистрировал для вашего домена. Пакет сверяет его со значением E-IMZO-SERVER и останавливает старт flow при несовпадении. `EIMZO_MOBILE_UPLOAD_URL` — публичный URL, по которому ID-CARD-приложение POST’ит подписанный PKCS#7. Параметры polling возвращаются из `/mobile/*/start` и автоматически применяются `EimzoMobile`.
 
 ---
 
@@ -221,11 +221,11 @@ EIMZO_LOCAL_PARSE=true
 | Переменная | Заметки |
 |---|---|
 | `EIMZO_ROUTES_ENABLED` | Поставьте `false`, если регистрируете маршруты сами. |
-| `EIMZO_ROUTE_PREFIX` | Префикс браузер-видимых маршрутов (по умолчанию `eimzo`). |
+| `EIMZO_ROUTE_PREFIX` | Префикс браузер-видимых маршрутов (по умолчанию `eimzo`). Встроенные страницы передают фактические named-route URL в JS, поэтому нестандартный префикс не требует ручной настройки `EimzoBridge`. |
 | `EIMZO_API_PREFIX` | Префикс stateless-маршрутов `api/*`. |
 | `EIMZO_ASSET_ROUTES_ENABLED` | Отдаёт встроенный JS из `/vendor/eimzo/...`. Отключите после `php artisan vendor:publish --tag=eimzo-assets`, чтобы nginx обслуживал их как статические файлы. |
 | `EIMZO_ASSET_CACHE_SECONDS` | `Cache-Control: max-age` для отдаваемого JS. |
-| `EIMZO_LOCAL_PARSE` | Локальное извлечение подписанта из PKCS#7 через `openssl_pkcs7_read`. Отключите, чтобы вообще не парсить локально (только серверный payload). |
+| `EIMZO_LOCAL_PARSE` | Локальное извлечение подписанта из PKCS#7 через `openssl_pkcs7_read`. При `false` сертификат всё равно сохраняется из доверенного payload E-IMZO-SERVER; отключается только локальный разбор. |
 
 ---
 

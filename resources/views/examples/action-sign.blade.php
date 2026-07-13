@@ -80,9 +80,11 @@
                 certSelect.appendChild(opt);
             });
             formCard.style.display = 'block';
-            installStatus.innerHTML = '<span class="ok">' + keys.length + ' key(s) found</span>';
+            installStatus.className = 'ok';
+            installStatus.textContent = keys.length + ' key(s) found';
         } catch (e) {
-            installStatus.innerHTML = '<span class="err">' + e.message + '</span>';
+            installStatus.className = 'err';
+            installStatus.textContent = e.message;
             installBtn.disabled = false;
         }
     });
@@ -105,7 +107,8 @@
                     storage_hint: 'store signature.id as signed_actions.signature_id'
                 }
             });
-            signStatus.innerHTML = '<span class="ok">' + res.signature.verification_status + '</span>';
+            signStatus.className = 'ok';
+            signStatus.textContent = res.signature.verification_status;
             resultCard.style.display = 'block';
             sigIdBadge.textContent = '#' + res.signature.id;
             resultPre.textContent = JSON.stringify({
@@ -120,7 +123,8 @@
                 eimzo_response: res
             }, null, 2);
         } catch (e) {
-            signStatus.innerHTML = '<span class="err">' + e.message + '</span>';
+            signStatus.className = 'err';
+            signStatus.textContent = e.message;
         } finally {
             signBtn.disabled = false;
         }

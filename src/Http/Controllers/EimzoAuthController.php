@@ -40,7 +40,10 @@ class EimzoAuthController extends Controller
             'message' => '',
             'challenge' => $row->challenge,
             'expires_at' => $row->expires_at->toIso8601String(),
-            'ttl' => (int) config('eimzo.auth.challenge_ttl', 120),
+            'ttl' => (int) ($row->meta['ttl'] ?? max(
+                0,
+                $row->expires_at->getTimestamp() - now()->getTimestamp()
+            )),
         ]);
     }
 

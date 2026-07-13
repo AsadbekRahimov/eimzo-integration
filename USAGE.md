@@ -79,16 +79,16 @@ php artisan migrate
 ```env
 # Java E-IMZO-SERVER
 EIMZO_SERVER_URL=http://127.0.0.1:8080
-# Если nginx проксирует /frontend на тот же сервер — оставьте /frontend
-EIMZO_FRONTEND_URL=/frontend
+# Обычно пусто. Укажите /frontend только при настроенном same-origin proxy.
+EIMZO_FRONTEND_URL=
 EIMZO_SERVER_TIMEOUT=20
 EIMZO_SERVER_CONNECT_TIMEOUT=3
-# Заголовок Host, который видит Java-сервис. Пусто = берётся из request().
+# Заголовок Host, который видит Java-сервис. Пусто = hostname запроса без порта.
 EIMZO_REQUEST_HOST=
 
 # Per-domain API keys (выдаёт ГУП ЦГИБ)
-# Формат: domain1,KEY1,domain2,KEY2,...
-EIMZO_API_KEYS=localhost,LOCALHOST_KEY,my-crm.uz,DOMAIN_KEY
+# Рекомендуемый формат: domain1=KEY1;domain2=KEY2
+EIMZO_API_KEYS="localhost=LOCALHOST_KEY;my-crm.uz=DOMAIN_KEY"
 
 # Авторизация
 EIMZO_CHALLENGE_TTL=120
@@ -133,19 +133,33 @@ $table->timestamp('eimzo_authenticated_at')->nullable();
 
 См. готовую миграцию `database/migrations/2026_05_02_000004_add_eimzo_columns_to_users_table.php`.
 
-### 4. CSRF / VerifyCsrfToken
+### 4. CSRF
 
 Mobile-upload вызывается ID-CARD-приложением, которое не знает про CSRF.
-В `App\Http\Middleware\VerifyCsrfToken` добавьте:
+Для Laravel 11/12 добавьте исключения в `bootstrap/app.php`:
+
+```php
+->withMiddleware(function (Middleware $middleware) {
+    $middleware->validateCsrfTokens(except: [
+        'eimzo/mobile/upload',
+        'eimzo/frontend/mobile/upload',
+        'frontend/mobile/upload',
+    ]);
+})
+```
+
+В Laravel 8–10 добавьте те же пути в
+`App\Http\Middleware\VerifyCsrfToken`:
 
 ```php
 protected $except = [
     'eimzo/mobile/upload',
+    'eimzo/frontend/mobile/upload',
     'frontend/mobile/upload',
 ];
 ```
 
-API-маршруты (`/api/eimzo/*`) уже идут через guard `api` без CSRF.
+API-маршруты (`/api/eimzo/*`) по умолчанию идут через middleware-группу `api`, поэтому стандартный Laravel `VerifyCsrfToken` к ним не применяется. Guard и stateful-аутентификацию настройте отдельно под приложение.
 
 ### 5. Конфиг E-IMZO-SERVER (`config.properties`)
 
@@ -199,7 +213,7 @@ mobile.storage.redis.db=1
 | GET/POST| `/eimzo/frontend/mobile/upload`      | Алиас для совместимости |
 | GET/POST| `/frontend/mobile/upload`            | Корневой алиас (путь из эталонного демо qo0p) |
 
-Те же эндпоинты доступны под `/api/eimzo/*` (guard `api`, без CSRF, без сессий).
+Те же эндпоинты доступны под `/api/eimzo/*` и по умолчанию используют middleware-группу `api`. Конкретные guard, аутентификация и stateful/session-поведение зависят от конфигурации вашего приложения; настройте `eimzo.routes.api_middleware` под свой стек.
 
 ---
 
@@ -214,9 +228,16 @@ mobile.storage.redis.db=1
 <script src="/vendor/eimzo/vendor/e-imzo-client.js"></script>
 <script src="/vendor/eimzo/eimzo.js"></script>
 <script>
-  window.EIMZO_API_KEYS = @json(config('eimzo.api_keys'));
+  window.EIMZO_API_KEYS = @json(
+    \AsadbekRahimov\EimzoIntegration\Support\ApiKeyRegistry::resolveForHost(
+      config('eimzo.api_keys', []),
+      request()->getHost()
+    )
+  );
 </script>
 ```
+
+Встроенный layout уже делает эту фильтрацию и дополнительно публикует `window.EIMZO_ROUTES`, поэтому `EIMZO_ROUTE_PREFIX` автоматически учитывается браузерным мостом.
 
 ### Поток логина
 
@@ -296,9 +317,10 @@ console.log(result.signature.has_timestamp);   // true если TSA сработ
    (старые) и пишем в `pkcs7_with_timestamp`.
 3. Полная верификация: `POST /backend/pkcs7/verify/attached` (или
    `/detached` с телом `<data>|<pkcs7>`).
-4. Локальный парсинг сертификата через `openssl_pkcs7_read` (если
-   `EIMZO_LOCAL_PARSE=true`), upsert `eimzo_certificates`, запись в
-   `eimzo_signatures` со `verification_status=valid|invalid`.
+4. Метаданные сертификата берутся из доверенного ответа E-IMZO-SERVER и,
+   если `EIMZO_LOCAL_PARSE=true`, дополняются локальным разбором через
+   `openssl_pkcs7_read`. Затем выполняется upsert `eimzo_certificates` и
+   запись в `eimzo_signatures` со `verification_status=valid|invalid`.
 5. Если `EIMZO_STORAGE_DISK` задан — сырой PKCS#7 сохраняется в файл
    `eimzo/signatures/{id}.p7`.
 
@@ -307,10 +329,13 @@ console.log(result.signature.has_timestamp);   // true если TSA сработ
 ```javascript
 await eimzo.sign(keys[0], {
   data: largeFileAsBase64,
+  dataIsBase64: true,
   detached: true,
   document_name: 'agreement.pdf'
 });
 ```
+
+Без `dataIsBase64: true` строка считается обычным текстом и кодируется в Base64 самим мостом. Алиас `data_is_base64` также поддерживается.
 
 ---
 
@@ -469,7 +494,8 @@ const m = new EimzoMobile();
 
 // 1. Логин через мобилу
 const session = await m.startAuth();
-// session = { status, site_id, document_id, challenge, qr, ttl }
+// session = { status, site_id, document_id, challenge, qr, ttl,
+//             poll_timeout, poll_interval_ms }
 QRCode.toCanvas(document.getElementById('qr'), session.qr);
 
 const result = await m.waitAndCompleteAuth(session.document_id);
@@ -479,16 +505,17 @@ const result = await m.waitAndCompleteAuth(session.document_id);
 ### Подпись через мобилу
 
 ```javascript
-const documentBase64 = btoa(JSON.stringify(canonical));
+const documentBytes = new TextEncoder().encode(JSON.stringify(canonical));
+const documentBase64 = btoa(String.fromCharCode(...documentBytes));
 const session = await m.startSign(documentBase64);
 QRCode.toCanvas(document.getElementById('qr'), session.qr);
 
 const sig = await m.waitAndCompleteSign(session.document_id, documentBase64, {
   document_type: 'invoice',
   document_name: 'invoice-42.json',
-  meta: { canonical: JSON.parse(atob(documentBase64)) }
+  meta: { canonical }
 });
-// sig.signature.id — ID в eimzo_signatures, pkcs7_with_timestamp заполнен
+// sig.signature.id — ID в eimzo_signatures; has_timestamp подтверждает TSA
 ```
 
 ### Структура QR
@@ -500,8 +527,9 @@ siteId(4 hex) + documentId(8 hex) + gostHash34_11_94(64 hex) + CRC32(8 hex)
 `makeQrPayload()` собирает строку. Для GOST-хеша используется глобальный
 `GostHash` — он **не входит** в поставляемые vendor-скрипты, подключите
 `gost-hash.js` отдельно (образец — <https://test.e-imzo.uz/demo/eimzoidcard>).
-Если хеша нет — fallback на SHA-256 для отладки (мобильное приложение его
-не примет).
+Если GOST-модуль отсутствует или возвращает не 64 hex-символа, helper
+останавливается с ошибкой. Для подписи `startSign()` хеширует декодированные
+байты документа, а не печатную Base64-строку.
 
 ### UPLOAD URL
 
@@ -730,13 +758,13 @@ php vendor/bin/phpunit
 ## Резюме маршрутов мобильного API в одном кадре
 
 ```
-POST  /eimzo/mobile/auth/start        →  {site_id, document_id, challenge}
+POST  /eimzo/mobile/auth/start        →  {site_id, document_id, challenge, poll_timeout, poll_interval_ms}
 POST  /eimzo/mobile/auth/status       ⇄  {status: 1|2|-1|-2|-9|-10}
 POST  /eimzo/mobile/auth/complete     →  {user, certificate, authenticated}
 
-POST  /eimzo/mobile/sign/start        →  {site_id, document_id}
+POST  /eimzo/mobile/sign/start        →  {site_id, document_id, poll_timeout, poll_interval_ms}
 POST  /eimzo/mobile/sign/status       ⇄  {status}
-POST  /eimzo/mobile/sign/complete     →  {signature: {id, pkcs7Attached, ts}}
+POST  /eimzo/mobile/sign/complete     →  {signature: {id, document_hash, has_timestamp, signed_at, timestamp_at}}
 
 POST  /eimzo/mobile/upload            ←  PKCS#7 от ID-CARD app
 ```

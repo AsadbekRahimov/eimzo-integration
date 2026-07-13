@@ -7,11 +7,13 @@ use Illuminate\Contracts\Auth\Factory as AuthFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Storage;
 use AsadbekRahimov\EimzoIntegration\Exceptions\EimzoServerException;
 use AsadbekRahimov\EimzoIntegration\Exceptions\VerificationFailedException;
 use AsadbekRahimov\EimzoIntegration\Models\EimzoCertificate;
 use AsadbekRahimov\EimzoIntegration\Models\EimzoChallenge;
 use AsadbekRahimov\EimzoIntegration\Models\EimzoSignature;
+use AsadbekRahimov\EimzoIntegration\Support\SignerInfo;
 
 /**
  * High-level wrapper around the mobile API of E-IMZO-SERVER.
@@ -69,10 +71,13 @@ class EimzoMobileService
             );
         }
 
-        $documentId = (string) ($payload['documentId'] ?? '');
-        $siteId = (string) ($payload['siteId'] ?? '');
+        $documentId = is_string($payload['documentId'] ?? null)
+            ? trim($payload['documentId'])
+            : '';
+        $siteId = $this->resolveSiteId($payload);
         // Upstream protocol uses "challange" (sic). Accept both.
-        $challenge = (string) ($payload['challenge'] ?? $payload['challange'] ?? '');
+        $challengeValue = $payload['challenge'] ?? ($payload['challange'] ?? null);
+        $challenge = is_string($challengeValue) ? $challengeValue : '';
 
         if ($documentId === '' || $challenge === '') {
             throw new EimzoServerException(
@@ -118,8 +123,10 @@ class EimzoMobileService
             );
         }
 
-        $documentId = (string) ($payload['documentId'] ?? '');
-        $siteId = (string) ($payload['siteId'] ?? '');
+        $documentId = is_string($payload['documentId'] ?? null)
+            ? trim($payload['documentId'])
+            : '';
+        $siteId = $this->resolveSiteId($payload);
 
         if ($documentId === '') {
             throw new EimzoServerException(
@@ -186,13 +193,20 @@ class EimzoMobileService
             );
         }
 
+        $info = $this->subjectInfo($payload);
+        if (empty($info['serial_number'])) {
+            throw new EimzoServerException(
+                'E-IMZO-SERVER returned successful mobile authentication without a signer certificate',
+                $payload
+            );
+        }
+
         // Claim the DocumentID atomically before persisting anything so a
         // concurrent replay can only ever produce one successful login.
         if (! $row->markUsed()) {
             throw new VerificationFailedException('Mobile DocumentID already used');
         }
 
-        $info = $this->subjectInfo($payload);
         $user = $this->resolveUser($info);
 
         $certificate = EimzoCertificate::upsertFromSigner(
@@ -248,10 +262,26 @@ class EimzoMobileService
     ): EimzoSignature {
         $row = $this->loadChallenge($documentId, 'mobile-sign');
 
+        $documentBase64 = (string) preg_replace('/\s+/', '', $documentBase64);
+        $rawData = base64_decode($documentBase64, true);
+        if ($documentBase64 === '' || $rawData === false) {
+            throw new \InvalidArgumentException('document must be non-empty valid base64');
+        }
+
         $payload = $this->server->mobileVerify($documentId, $documentBase64, $request->ip());
         if (($payload['status'] ?? null) !== 1) {
             throw new VerificationFailedException(
                 $payload['message'] ?? 'mobile signature verification failed',
+                $payload
+            );
+        }
+
+        $pkcs7Attached = is_string($payload['pkcs7Attached'] ?? null)
+            ? trim($payload['pkcs7Attached'])
+            : '';
+        if ($pkcs7Attached === '') {
+            throw new EimzoServerException(
+                'E-IMZO-SERVER returned successful mobile verification without pkcs7Attached',
                 $payload
             );
         }
@@ -266,28 +296,50 @@ class EimzoMobileService
         $certificate = ! empty($info['serial_number'])
             ? EimzoCertificate::upsertFromSigner($info, $context['user_id'] ?? null)
             : null;
+        if ($certificate) {
+            $certificate->forceFill([
+                'last_verify_payload' => $payload,
+                'last_verified_at' => now(),
+            ])->save();
+        }
 
-        $rawData = base64_decode($documentBase64, true);
+        $verificationInfo = is_array($payload['verificationInfo'] ?? null)
+            ? $payload['verificationInfo']
+            : [];
+
         $sig = EimzoSignature::create([
             'user_id' => $context['user_id'] ?? null,
             'certificate_id' => $certificate ? $certificate->id : null,
             'document_type' => $context['document_type'] ?? 'mobile-sign',
             'document_name' => $context['document_name'] ?? ('mobile-sign:' . $documentId),
-            'document_size' => $rawData !== false ? strlen($rawData) : null,
-            'document_hash' => $rawData !== false ? hash('sha256', $rawData) : null,
+            'document_size' => strlen($rawData),
+            'document_hash' => hash('sha256', $rawData),
             'pkcs7' => null,
             'detached' => false,
-            'pkcs7_with_timestamp' => (string) ($payload['pkcs7Attached'] ?? '') ?: null,
-            'signed_at' => $this->parseTime($payload['verificationInfo']['signingTime'] ?? null),
-            'timestamp_at' => $this->parseTime($payload['verificationInfo']['timestampedTime'] ?? null),
+            'pkcs7_with_timestamp' => $pkcs7Attached,
+            'signed_at' => $this->parseTime($verificationInfo['signingTime'] ?? null),
+            'timestamp_at' => $this->parseTime($verificationInfo['timestampedTime'] ?? null),
             'verification_status' => EimzoSignature::STATUS_VALID,
             'verification_payload' => $payload,
             'verified_at' => now(),
             'meta' => array_merge($context['meta'] ?? [], [
                 'mobile_document_id' => $documentId,
-                'policy_identifiers' => $payload['verificationInfo']['policyIdentifiers'] ?? [],
+                'policy_identifiers' => is_array($verificationInfo['policyIdentifiers'] ?? null)
+                    ? $verificationInfo['policyIdentifiers']
+                    : [],
             ]),
         ]);
+
+        if ($sig->pkcs7_with_timestamp && ($disk = config('eimzo.sign.storage_disk'))) {
+            $path = config('eimzo.sign.storage_path', 'eimzo/signatures') . '/' . $sig->id . '.p7';
+            try {
+                $binary = base64_decode($sig->pkcs7_with_timestamp, true);
+                Storage::disk($disk)->put($path, $binary === false ? $sig->pkcs7_with_timestamp : $binary);
+                $sig->forceFill(['pkcs7_path' => $path])->save();
+            } catch (\Throwable $e) {
+                // The verified DB copy remains authoritative when storage is unavailable.
+            }
+        }
 
         return $sig;
     }
@@ -311,31 +363,7 @@ class EimzoMobileService
 
     private function subjectInfo(array $payload): array
     {
-        $cert = $payload['subjectCertificateInfo'] ?? [];
-        $info = [
-            'serial_number' => $cert['serialNumber'] ?? null,
-            'subject_dn' => $cert['X500Name'] ?? null,
-            'valid_from' => $this->parseTime($cert['validFrom'] ?? null),
-            'valid_to' => $this->parseTime($cert['validTo'] ?? null),
-        ];
-
-        $sn = $cert['subjectName'] ?? [];
-        if (is_array($sn)) {
-            $info['cn'] = $sn['CN'] ?? null;
-            $info['uid'] = $sn['UID'] ?? null;
-            $info['pinfl'] = $sn['1.2.860.3.16.1.2'] ?? ($sn['PINFL'] ?? null);
-            $info['tin'] = $sn['1.2.860.3.16.1.1'] ?? ($sn['TIN'] ?? ($sn['INN'] ?? null));
-            $info['o'] = $sn['O'] ?? null;
-            $info['t'] = $sn['T'] ?? ($sn['TITLE'] ?? null);
-            $info['country'] = $sn['C'] ?? null;
-            $info['email'] = $sn['EMAILADDRESS'] ?? ($sn['EMAIL'] ?? null);
-        }
-
-        if (! empty($info['serial_number']) && is_string($info['serial_number'])) {
-            $info['serial_number'] = strtoupper(ltrim($info['serial_number'], '0')) ?: '0';
-        }
-
-        return $info;
+        return SignerInfo::fromServerPayload($payload);
     }
 
     private function resolveUser(array $info): ?Authenticatable
@@ -364,13 +392,17 @@ class EimzoMobileService
             return null;
         }
 
-        $payload = [
-            $column => $value,
-            'name' => $info['cn'] ?? $value,
-            'email' => $info['email'] ?? ($value . '@eimzo.local'),
-            'password' => bcrypt(bin2hex(random_bytes(16))),
-        ];
-        $table = (new $modelClass)->getTable();
+        $table = $model->getTable();
+        $payload = [$column => $value];
+        if (Schema::hasColumn($table, 'name')) {
+            $payload['name'] = $info['cn'] ?? $value;
+        }
+        if (Schema::hasColumn($table, 'email')) {
+            $payload['email'] = $info['email'] ?? ($value . '@eimzo.local');
+        }
+        if (Schema::hasColumn($table, 'password')) {
+            $payload['password'] = bcrypt(bin2hex(random_bytes(16)));
+        }
         if (Schema::hasColumn($table, 'tin')) {
             $payload['tin'] = $info['tin'] ?? null;
         }
@@ -379,6 +411,32 @@ class EimzoMobileService
         }
 
         return $modelClass::query()->create($payload);
+    }
+
+    private function resolveSiteId(array $payload): string
+    {
+        $serverSiteId = is_string($payload['siteId'] ?? null)
+            ? trim($payload['siteId'])
+            : '';
+        $configuredSiteId = trim((string) config('eimzo.mobile.site_id', ''));
+
+        if (
+            $serverSiteId !== ''
+            && $configuredSiteId !== ''
+            && strcasecmp($serverSiteId, $configuredSiteId) !== 0
+        ) {
+            throw new EimzoServerException(
+                'Configured E-IMZO mobile SiteID does not match E-IMZO-SERVER',
+                ['configured_site_id' => $configuredSiteId, 'server_payload' => $payload]
+            );
+        }
+
+        $siteId = $serverSiteId !== '' ? $serverSiteId : $configuredSiteId;
+        if ($siteId === '') {
+            throw new EimzoServerException('E-IMZO mobile SiteID is not configured', $payload);
+        }
+
+        return $siteId;
     }
 
     /**
@@ -393,17 +451,26 @@ class EimzoMobileService
         $candidates = [];
 
         if ($configuredColumn !== '') {
-            $candidates[] = $configuredColumn;
+            $candidates[] = [
+                $configuredColumn,
+                $this->signerFieldForUserColumn($configuredColumn),
+            ];
         }
 
-        foreach (['pinfl', 'tin', 'serial_number'] as $fallback) {
-            if ($fallback !== $configuredColumn) {
+        foreach ([
+            ['pinfl', 'pinfl'],
+            ['tin', 'tin'],
+            ['inn', 'tin'],
+            ['eimzo_serial_number', 'serial_number'],
+            ['serial_number', 'serial_number'],
+        ] as $fallback) {
+            if ($fallback[0] !== $configuredColumn) {
                 $candidates[] = $fallback;
             }
         }
 
-        foreach ($candidates as $column) {
-            $value = $info[$column] ?? null;
+        foreach ($candidates as [$column, $signerField]) {
+            $value = $info[$signerField] ?? null;
             if (! is_string($value) || $value === '' || ! Schema::hasColumn($table, $column)) {
                 continue;
             }
@@ -412,6 +479,18 @@ class EimzoMobileService
         }
 
         return null;
+    }
+
+    private function signerFieldForUserColumn(string $column): string
+    {
+        if ($column === 'inn') {
+            return 'tin';
+        }
+        if ($column === 'eimzo_serial_number') {
+            return 'serial_number';
+        }
+
+        return $column;
     }
 
     private function touchUser(Authenticatable $user, array $info): void

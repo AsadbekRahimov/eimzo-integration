@@ -4,7 +4,7 @@
  *
  * Loads the desktop client over WebSocket (wss://127.0.0.1:64443), enumerates
  * available certificates, signs challenges/payloads, then talks to the Laravel
- * backend mounted at /eimzo/* by the EimzoServiceProvider.
+ * backend routes rendered by the EimzoServiceProvider.
  *
  * Usage:
  *   const eimzo = new EimzoBridge({ csrfToken: '...' });
@@ -38,6 +38,24 @@
         return btoa(unescape(encodeURIComponent(str)));
     }
 
+    function normalizeBase64(value) {
+        if (typeof value !== 'string') {
+            throw new Error('Base64 document data must be a string');
+        }
+        const compact = value.replace(/\s+/g, '');
+        if (compact.length % 4 === 1 || !/^[A-Za-z0-9+/]*={0,2}$/.test(compact)) {
+            throw new Error('Document data is not valid base64');
+        }
+        if (compact && typeof global.atob === 'function') {
+            try {
+                global.atob(compact);
+            } catch (e) {
+                throw new Error('Document data is not valid base64');
+            }
+        }
+        return compact;
+    }
+
     class EimzoBridge {
         constructor(options) {
             options = options || {};
@@ -51,11 +69,14 @@
                 timestampData: '/eimzo/timestamp/data',
                 makeAttached: '/eimzo/pkcs7/make-attached',
                 join: '/eimzo/pkcs7/join'
-            }, options.routes || {});
+            }, global.EIMZO_ROUTES || {}, options.routes || {});
             this.csrfToken = options.csrfToken
                 || (document.querySelector('meta[name="csrf-token"]') || {}).content
                 || null;
             this.apiKeys = options.apiKeys || global.EIMZO_API_KEYS || null;
+            this.defaultDetached = options.defaultDetached !== undefined
+                ? !!options.defaultDetached
+                : !!global.EIMZO_SIGN_DEFAULT_DETACHED;
             this.installed = false;
         }
 
@@ -101,8 +122,18 @@
             }));
         }
 
-        signRaw(key, data, detached) {
-            const data64 = (typeof data === 'string') ? utf8ToBase64(data) : data;
+        signRaw(key, data, detached, dataIsBase64) {
+            if (typeof data !== 'string') {
+                return fail('Document data must be a string');
+            }
+
+            let data64;
+            try {
+                data64 = dataIsBase64 ? normalizeBase64(data) : utf8ToBase64(data);
+            } catch (e) {
+                return fail(e);
+            }
+
             return this.loadKey(key).then((keyId) => new Promise((resolve, reject) => {
                 global.CAPIWS.callFunction(
                     { plugin: 'pkcs7', name: 'create_pkcs7', arguments: [data64, keyId, detached ? 'yes' : 'no'] },
@@ -138,13 +169,23 @@
 
         sign(key, options) {
             options = options || {};
-            const detached = !!options.detached;
-            return this.signRaw(key, options.data, detached).then((pkcs7) => this.fetch(this.routes.sign, {
+            const detached = options.detached === undefined ? this.defaultDetached : !!options.detached;
+            const dataIsBase64 = !!(options.dataIsBase64 || options.data_is_base64);
+            let detachedData;
+            try {
+                detachedData = detached
+                    ? (dataIsBase64 ? normalizeBase64(options.data) : utf8ToBase64(options.data))
+                    : undefined;
+            } catch (e) {
+                return fail(e);
+            }
+
+            return this.signRaw(key, options.data, detached, dataIsBase64).then((pkcs7) => this.fetch(this.routes.sign, {
                 method: 'POST',
                 body: {
                     pkcs7,
                     detached,
-                    data: detached ? (typeof options.data === 'string' ? utf8ToBase64(options.data) : options.data) : undefined,
+                    data: detachedData,
                     document_type: options.document_type || null,
                     document_name: options.document_name || null,
                     attach_timestamp: options.attach_timestamp,

@@ -160,7 +160,7 @@ $server->mobileVerify($docId, $documentBase64);              // POST /backend/mo
 
 Пакет извлекает поля сертификата подписанта **локально** через `openssl_pkcs7_read` до/после серверной верификации. Так вы получаете `CN`, `TIN`, `PINFL`, `serial_number`, `valid_from`, `valid_to` и сырой PEM **без** ожидания Java. Локальный парсинг — **не** замена проверке цепочки доверия: эту проверку всегда делает E-IMZO-SERVER.
 
-Отключите через `EIMZO_LOCAL_PARSE=false`, если у вас нет расширения openssl или вы хотите строго server-only-парсинг.
+Отключите через `EIMZO_LOCAL_PARSE=false`, если у вас нет расширения openssl или вы хотите строго server-only-парсинг. В этом режиме нормализованные поля сертификата всё равно извлекаются из `subjectCertificateInfo` / `pkcs7Info.signers[0].certificate[0]` доверенного ответа E-IMZO-SERVER.
 
 ### 3.3 Три таблицы хранения
 
@@ -202,7 +202,7 @@ $signature = $signService->store([
 
 ### 4.1 Что навязывает desktop-клиент
 
-Когда вы вызываете `CAPIWS.apikey([d1, k1, d2, k2, ...])`, desktop-клиент запоминает список **на всё время WebSocket-сессии**. Последующие вызовы (`pkcs7.create_pkcs7`, `pfx.list_all_certificates`, …) отвергаются, если хост вызывающей страницы (`window.location.host`, без порта) отсутствует в списке или его ключ не совпадает с тем, который UZ PKI Technical Centre выдал именно для этого хоста.
+Когда вы вызываете `CAPIWS.apikey([d1, k1, d2, k2, ...])`, desktop-клиент запоминает список **на всё время WebSocket-сессии**. Последующие вызовы (`pkcs7.create_pkcs7`, `pfx.list_all_certificates`, …) отвергаются, если имя хоста вызывающей страницы (`window.location.hostname`, то есть без порта) отсутствует в списке или его ключ не совпадает с тем, который UZ PKI Technical Centre выдал именно для этого хоста.
 
 Desktop-клиент сравнивает хосты регистронезависимо, но **дословно** — `localhost` и `127.0.0.1` для него разные, поэтому в dev-окружении, где переключаются между ними, нужны оба ключа.
 
@@ -418,7 +418,7 @@ await eimzo.sign(key, {
   │  {status:1, redirect, ...}                                           │
 ```
 
-Формат QR-payload (`site_id + document_id + GOST(text) + crc32(...)`) реализован в `resources/js/eimzo-mobile.js::makeQrPayload()`. Он ожидает глобальный `GostHash` — этот модуль **не входит** в поставляемые vendor-скрипты, подключите `gost-hash.js` отдельно (образец — `test.e-imzo.uz/demo/eimzoidcard`). Без него используется SHA-256-fallback, который реальное ID-CARD-приложение не примет.
+Формат QR-payload (`site_id + document_id + GOST(bytes) + crc32(...)`) реализован в `resources/js/eimzo-mobile.js::makeQrPayload()`. Он ожидает глобальный `GostHash` — этот модуль **не входит** в поставляемые vendor-скрипты, подключите `gost-hash.js` отдельно (образец — `test.e-imzo.uz/demo/eimzoidcard`). Без GOST-модуля helper останавливается с ошибкой; заведомо несовместимый SHA-256 fallback не используется. Для mobile-sign Base64 сначала декодируется, и QR содержит GOST-хеш исходных байтов документа.
 
 ---
 
@@ -428,7 +428,7 @@ await eimzo.sign(key, {
 |---|---|---|
 | 1 | Подписанный challenge можно верифицировать только **один раз** | `eimzo_challenges.used_at`, захватывается атомарным условным UPDATE в `EimzoAuthService::verifyChallenge()` (и в mobile-потоках) до записи результатов — конкурентный replay проигрывает гонку |
 | 2 | Подписанный challenge истекает по TTL | `eimzo_challenges.expires_at`, по умолчанию 120с |
-| 3 | PKCS#7 должен встраивать **те же** байты challenge, что были выпущены | `EimzoAuthService::verifyChallenge()` сравнивает `$payload['payload']['challenge']` с записью |
+| 3 | PKCS#7 должен встраивать **те же** байты challenge, что были выпущены | E-IMZO-SERVER `/backend/auth` сверяет подписанный challenge со своей временной памятью; пакет дополнительно ограничивает локальную запись TTL и атомарным `used_at` |
 | 4 | Подписной сертификат должен быть валиден на момент проверки против гос-PKI | E-IMZO-SERVER `/backend/auth` и `/backend/pkcs7/verify/*` (локальному парсингу для проверки доверия мы не верим) |
 | 5 | `INN` / `TIN` — колонка поиска; `UID` — **не** допустимый fallback | `Pkcs7Parser::buildInfo()` и `EimzoAuthService::resolveUser()` |
 | 6 | Браузер может звать desktop-клиент только с хоста, который есть в списке API-ключей | Desktop-клиент (CAPIWS), при этом пакет отдаёт лишь совпадающую пару |

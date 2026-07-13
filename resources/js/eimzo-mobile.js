@@ -14,8 +14,8 @@
  *
  * GOST R 34.11-94 hashing is NOT part of the bundled vendor scripts: load the
  * gost-hash module (global `GostHash`) from test.e-imzo.uz/demo/eimzoidcard
- * before calling makeQrPayload(). Without it a SHA-256 fallback is used, which
- * real ID-CARD apps will reject - it only exists for mock/demo mode.
+ * before calling makeQrPayload(). The helper fails closed when GOST hashing
+ * is unavailable because SHA-256 QR payloads are rejected by real ID-CARD apps.
  *
  * Usage:
  *
@@ -28,7 +28,8 @@
  *     const result = await m.waitAndCompleteAuth(session.document_id);
  *
  *     // Sign flow
- *     const doc = btoa(JSON.stringify(action));
+ *     const bytes = new TextEncoder().encode(JSON.stringify(action));
+ *     const doc = btoa(String.fromCharCode(...bytes));
  *     const signSession = await m.startSign(doc);
  *     renderQr(signSession.qr);
  *     const sig = await m.waitAndCompleteSign(signSession.document_id, doc);
@@ -66,19 +67,31 @@
         return ('00000000' + crc.toString(16)).slice(-8).toUpperCase();
     }
 
-    function gostHashOrFallback(text) {
-        // Prefer the GOST hash bundled with the desktop client. Fallback uses
-        // SHA-256 hex - the mobile app expects GOST so this fallback only
-        // works in mock/demo mode without a real ID-CARD device.
+    function gostHash(text, customHash) {
+        if (typeof customHash === 'function') {
+            return customHash(text);
+        }
         if (typeof global.GostHash === 'function') {
             try {
                 return new global.GostHash().gosthash(text);
             } catch (e) { /* fall through */ }
         }
-        if (global.CryptoJS && global.CryptoJS.SHA256) {
-            return global.CryptoJS.SHA256(text).toString().toUpperCase();
-        }
         return null;
+    }
+
+    function decodeBase64(value) {
+        if (typeof value !== 'string') {
+            throw new Error('Mobile document must be a Base64 string');
+        }
+        const compact = value.replace(/\s+/g, '');
+        if (!compact || compact.length % 4 === 1 || !/^[A-Za-z0-9+/]*={0,2}$/.test(compact)) {
+            throw new Error('Mobile document is not valid Base64');
+        }
+        try {
+            return global.atob(compact);
+        } catch (e) {
+            throw new Error('Mobile document is not valid Base64');
+        }
     }
 
     function fetchJson(url, options, csrfToken) {
@@ -118,12 +131,14 @@
     class EimzoMobile {
         constructor(options) {
             options = options || {};
-            this.routes = Object.assign({}, DEFAULT_ROUTES, options.routes || {});
+            const runtime = global.EIMZO_MOBILE_CONFIG || {};
+            this.routes = Object.assign({}, DEFAULT_ROUTES, runtime.routes || {}, options.routes || {});
             this.csrfToken = options.csrfToken
                 || (document.querySelector('meta[name="csrf-token"]') || {}).content
                 || null;
-            this.pollIntervalMs = options.pollIntervalMs || 1500;
-            this.pollTimeoutMs = options.pollTimeoutMs || 120000;
+            this.pollIntervalMs = options.pollIntervalMs || runtime.pollIntervalMs || 1500;
+            this.pollTimeoutMs = options.pollTimeoutMs || runtime.pollTimeoutMs || 120000;
+            this.hashFunction = options.hashFunction || null;
         }
 
         /**
@@ -135,9 +150,10 @@
          * representation) that the user is signing.
          */
         makeQrPayload(siteId, documentId, text) {
-            const hash = gostHashOrFallback(text);
-            if (!hash) {
-                throw new Error('GOST hashing module is not loaded');
+            let hash = gostHash(text, this.hashFunction);
+            hash = typeof hash === 'string' ? hash.replace(/\s+/g, '').toUpperCase() : '';
+            if (!/^[0-9A-F]{64}$/.test(hash)) {
+                throw new Error('GOST hash function is unavailable or returned an invalid digest');
             }
             const code = String(siteId) + String(documentId) + String(hash);
             return code + crc32Hex(code);
@@ -146,15 +162,27 @@
         startAuth() {
             return fetchJson(this.routes.authStart, { method: 'POST', body: {} }, this.csrfToken)
                 .then((res) => {
+                    this._applyRuntimeConfig(res);
                     res.qr = this.makeQrPayload(res.site_id, res.document_id, res.challenge);
                     return res;
                 });
         }
 
         startSign(documentBase64) {
+            let document;
+            try {
+                // `/backend/mobile/verify` decodes the Base64 document before
+                // checking it, so the QR must contain GOST(raw bytes), not a
+                // hash of the printable Base64 representation.
+                document = decodeBase64(documentBase64);
+            } catch (e) {
+                return Promise.reject(e);
+            }
+
             return fetchJson(this.routes.signStart, { method: 'POST', body: {} }, this.csrfToken)
                 .then((res) => {
-                    res.qr = this.makeQrPayload(res.site_id, res.document_id, documentBase64);
+                    this._applyRuntimeConfig(res);
+                    res.qr = this.makeQrPayload(res.site_id, res.document_id, document);
                     return res;
                 });
         }
@@ -204,7 +232,7 @@
                 if (r && r.status === 1) {
                     return r;
                 }
-                if (r && r.status !== 2 && r.status !== undefined && r.status !== null && r.status < 0) {
+                if (r && r.status !== 2) {
                     const err = new Error((r && r.message) || ('mobile status ' + r.status));
                     err.payload = r;
                     throw err;
@@ -212,6 +240,17 @@
                 await delay(this.pollIntervalMs);
             }
             throw new Error('Mobile signing timed out after ' + this.pollTimeoutMs + 'ms');
+        }
+
+        _applyRuntimeConfig(response) {
+            const interval = Number(response && response.poll_interval_ms);
+            const timeout = Number(response && response.poll_timeout);
+            if (interval > 0) {
+                this.pollIntervalMs = interval;
+            }
+            if (timeout > 0) {
+                this.pollTimeoutMs = timeout * 1000;
+            }
         }
     }
 

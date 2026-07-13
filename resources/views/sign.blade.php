@@ -65,9 +65,11 @@
                 certSelect.appendChild(opt);
             });
             formCard.style.display = 'block';
-            installStatus.innerHTML = '<span class="ok">ready</span>';
+            installStatus.className = 'ok';
+            installStatus.textContent = 'ready';
         } catch (e) {
-            installStatus.innerHTML = '<span class="err">' + e.message + '</span>';
+            installStatus.className = 'err';
+            installStatus.textContent = e.message;
             installBtn.disabled = false;
         }
     });
@@ -88,12 +90,14 @@
                 document_name: document.getElementById('document_name').value || null,
                 document_type: document.getElementById('document_type').value || null
             });
-            signStatus.innerHTML = '<span class="ok">' + res.signature.verification_status + '</span>';
+            signStatus.className = 'ok';
+            signStatus.textContent = res.signature.verification_status;
             resultCard.style.display = 'block';
             sigIdBadge.textContent = '#' + res.signature.id;
             resultPre.textContent = JSON.stringify(res, null, 2);
         } catch (e) {
-            signStatus.innerHTML = '<span class="err">' + e.message + '</span>';
+            signStatus.className = 'err';
+            signStatus.textContent = e.message;
         } finally {
             signBtn.disabled = false;
         }

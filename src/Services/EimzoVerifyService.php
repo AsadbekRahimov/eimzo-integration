@@ -3,6 +3,8 @@
 namespace AsadbekRahimov\EimzoIntegration\Services;
 
 use Illuminate\Http\Request;
+use AsadbekRahimov\EimzoIntegration\Exceptions\EimzoServerException;
+use AsadbekRahimov\EimzoIntegration\Support\SignerInfo;
 
 /**
  * Stateless verification service: takes a PKCS#7 (and optional original data
@@ -48,12 +50,27 @@ class EimzoVerifyService
             : $this->server->verifyAttached($pkcs7Base64, $request->ip());
 
         $signer = config('eimzo.local_parse', true) ? $this->parser->parseSigner($pkcs7Base64) : [];
+        $signer = SignerInfo::merge($signer, SignerInfo::fromServerPayload($payload));
 
         // /backend/pkcs7/verify/attached returns
         //   { "pkcs7Info": { "signers": [...], "documentBase64": "..." }, "status": 1 }
         // Surface signers/document so callers can audit cert chain + OCSP.
-        $signers = (array) ($payload['pkcs7Info']['signers'] ?? []);
-        $document = $payload['pkcs7Info']['documentBase64'] ?? null;
+        $pkcs7Info = is_array($payload['pkcs7Info'] ?? null) ? $payload['pkcs7Info'] : [];
+        $signers = is_array($pkcs7Info['signers'] ?? null) ? $pkcs7Info['signers'] : [];
+        $document = $pkcs7Info['documentBase64'] ?? null;
+        if (! $detached && ($payload['status'] ?? null) === 1) {
+            $hasDocument = array_key_exists('documentBase64', $pkcs7Info);
+            $decoded = is_string($document)
+                ? base64_decode((string) preg_replace('/\s+/', '', $document), true)
+                : false;
+
+            if (! $hasDocument || $decoded === false) {
+                throw new EimzoServerException(
+                    'E-IMZO-SERVER returned a valid attached signature without a valid embedded document',
+                    $payload
+                );
+            }
+        }
 
         return [
             'ok' => ($payload['status'] ?? null) === 1,

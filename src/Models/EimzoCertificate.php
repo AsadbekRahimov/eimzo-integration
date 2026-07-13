@@ -5,6 +5,7 @@ namespace AsadbekRahimov\EimzoIntegration\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Carbon;
 
 /**
@@ -79,18 +80,36 @@ class EimzoCertificate extends Model
             throw new \InvalidArgumentException('serial_number is required to upsert a certificate');
         }
 
-        $cert = static::firstOrNew(['serial_number' => $serial]);
         $fields = ['cn', 'tin', 'pinfl', 'uid', 'o', 't', 'country', 'email',
             'valid_from', 'valid_to', 'subject_dn', 'issuer_dn', 'certificate_pem'];
-        foreach ($fields as $f) {
-            if (array_key_exists($f, $info) && $info[$f] !== null) {
-                $cert->{$f} = $info[$f];
+
+        $fill = static function (self $cert) use ($fields, $info, $userId): void {
+            foreach ($fields as $field) {
+                if (array_key_exists($field, $info) && $info[$field] !== null) {
+                    $cert->{$field} = $info[$field];
+                }
             }
+            if ($userId !== null) {
+                $cert->user_id = $userId;
+            }
+        };
+
+        $cert = static::firstOrNew(['serial_number' => $serial]);
+        $fill($cert);
+
+        try {
+            $cert->save();
+        } catch (QueryException $e) {
+            // A concurrent request may have inserted the same serial after
+            // firstOrNew(). The unique DB index is authoritative: reload the
+            // winner and apply the same refresh instead of creating a duplicate.
+            $cert = static::where('serial_number', $serial)->first();
+            if (! $cert) {
+                throw $e;
+            }
+            $fill($cert);
+            $cert->save();
         }
-        if ($userId !== null) {
-            $cert->user_id = $userId;
-        }
-        $cert->save();
 
         return $cert;
     }

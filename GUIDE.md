@@ -164,9 +164,9 @@ public function challenge(Request $request): JsonResponse
     $row = $this->auth->issueChallenge($request);
     return response()->json([
         'status' => 1,
-        'challenge' => $row->challenge,           // <- UUID
+        'challenge' => $row->challenge,           // E-IMZO-SERVER bergan qiymat
         'expires_at' => $row->expires_at->toIso8601String(),
-        'ttl' => 120,
+        'ttl' => $row->meta['ttl'] ?? 120,
     ]);
 }
 ```
@@ -301,7 +301,7 @@ Diqqat qiling: har bir challenge **bir martagina** ishlatish mumkin (`used_at` u
 
 ## 3. Sign flow — hujjatni imzolash
 
-Hujjat imzolash — auth-ga juda o'xshash, lekin u imzolangan ma'lumot UUID emas, sizning hujjatingiz (PDF, JSON, matn) bo'ladi va biz odatda **TSA timestamp** ham qo'shamiz.
+Hujjat imzolash — auth-ga juda o'xshash, lekin imzolangan ma'lumot challenge emas, sizning hujjatingiz (PDF, JSON, matn) bo'ladi va biz odatda **TSA timestamp** ham qo'shamiz.
 
 ### Sequence
 
@@ -560,8 +560,8 @@ Sertifikatlar **serial_number** bo'yicha unikal. Bir foydalanuvchi har xil cert 
 | Ustun | Tip | |
 |-------|-----|---|
 | id | bigint | |
-| user_id | bigint nullable | Sizning `users` jadvaliga FK |
-| serial_number | string(64) indexed | X.509 serial (HEX) |
+| user_id | bigint nullable | Sizning `users` jadvaliga best-effort bog'lanish |
+| serial_number | string(64) unique | X.509 serial (HEX) |
 | cn | string | Common Name (egasi to'liq ismi) |
 | tin | string indexed | INN — tashkilot raqami |
 | pinfl | string indexed | jismoniy shaxs raqami |
@@ -585,7 +585,7 @@ Har bir imzo (login challenge ham, hujjat imzosi ham) bu yerda yashaydi.
 | id | bigint | |
 | signable_type, signable_id | morphs | Polymorphic — istalgan modelga (Contract, Order, ...) |
 | user_id | bigint nullable | imzolovchi |
-| certificate_id | bigint nullable | FK → eimzo_certificates |
+| certificate_id | bigint nullable | eimzo_certificates yozuviga best-effort bog'lanish |
 | document_type | string(64) | `auth-challenge`, `contract`, ... |
 | document_name | string | foydalanuvchiga ko'rinadigan nom |
 | document_size | unsignedBigInt | bayt |
@@ -767,7 +767,9 @@ CMD ["java", "-jar", "e-imzo-server.jar", "config.properties"]
 
 `config/eimzo.php` da:
 ```php
-'api_keys' => env('EIMZO_API_KEYS', 'localhost,...,yourdomain.uz,YOUR_KEY'),
+'api_keys' => \AsadbekRahimov\EimzoIntegration\Support\ApiKeyRegistry::normalize(
+    env('EIMZO_API_KEYS', 'localhost=LOCAL_KEY;yourdomain.uz=YOUR_KEY')
+),
 ```
 
 `yourdomain.uz` uchun unikal kalit PKI Tech Center tomonidan beriladi. Localhost va 127.0.0.1 uchun publik test kalitlari ishlaydi.
@@ -1005,7 +1007,7 @@ $check = $verify->verify($pkcs7, $optionalDataBase64, $request);
 $ts = app(EimzoTimestampService::class);
 $response = $ts->timestampPkcs7($pkcs7, $request);
 $response = $ts->timestampData($base64data, $request);
-$response = $ts->makeAttached($detachedPkcs7, $base64data, $request);
+$response = $ts->makeAttached($base64data, $detachedPkcs7, $request);
 $response = $ts->join($pkcs7A, $pkcs7B, $request);
 
 // PARSER (lokal, server-siz)

@@ -13,6 +13,7 @@ use AsadbekRahimov\EimzoIntegration\Exceptions\VerificationFailedException;
 use AsadbekRahimov\EimzoIntegration\Models\EimzoCertificate;
 use AsadbekRahimov\EimzoIntegration\Models\EimzoChallenge;
 use AsadbekRahimov\EimzoIntegration\Models\EimzoSignature;
+use AsadbekRahimov\EimzoIntegration\Support\SignerInfo;
 
 class EimzoAuthService
 {
@@ -49,12 +50,19 @@ class EimzoAuthService
             throw new EimzoServerException('E-IMZO-SERVER did not return a challenge', $payload);
         }
 
+        $configuredTtl = max(1, (int) config('eimzo.auth.challenge_ttl', 120));
+        $serverTtl = filter_var($payload['ttl'] ?? null, FILTER_VALIDATE_INT, [
+            'options' => ['min_range' => 1],
+        ]);
+        $ttl = is_int($serverTtl) ? min($configuredTtl, $serverTtl) : $configuredTtl;
+
         return EimzoChallenge::issue(
             'auth',
             $request->ip(),
             substr((string) $request->userAgent(), 0, 512),
-            ['server_payload' => $payload],
-            $challenge
+            ['server_payload' => $payload, 'ttl' => $ttl],
+            $challenge,
+            $ttl
         );
     }
 
@@ -92,9 +100,22 @@ class EimzoAuthService
 
         // E-IMZO-SERVER returns the actual signed challenge inside payload.subjectName/etc.
         // The signed bytes must equal the issued challenge.
-        $signed = $payload['payload']['challenge'] ?? null;
+        $nestedPayload = is_array($payload['payload'] ?? null) ? $payload['payload'] : [];
+        $signed = $nestedPayload['challenge'] ?? null;
         if (is_string($signed) && $signed !== '' && $signed !== $challenge) {
             throw new VerificationFailedException('Challenge mismatch in PKCS#7', $payload);
+        }
+
+        $info = config('eimzo.local_parse', true)
+            ? $this->parser->parseSigner($pkcs7Base64)
+            : [];
+
+        $info = SignerInfo::merge($info, SignerInfo::fromServerPayload($payload));
+        if (empty($info['serial_number'])) {
+            throw new EimzoServerException(
+                'E-IMZO-SERVER returned successful authentication without a signer certificate',
+                $payload
+            );
         }
 
         // Claim the challenge atomically before persisting anything: of two
@@ -103,12 +124,6 @@ class EimzoAuthService
         if (! $row->markUsed()) {
             throw new ChallengeExpiredException('Challenge already used');
         }
-
-        $info = config('eimzo.local_parse', true)
-            ? $this->parser->parseSigner($pkcs7Base64)
-            : [];
-
-        $info = $this->mergeServerInfo($info, $this->serverCertificateInfo($payload));
 
         $user = $this->resolveUser($info);
 
@@ -194,16 +209,21 @@ class EimzoAuthService
             return null;
         }
 
-        $payload = [
-            $column => $value,
-            'name' => $info['cn'] ?? $value,
-            'email' => $info['email'] ?? ($value . '@eimzo.local'),
-            'password' => bcrypt(bin2hex(random_bytes(16))),
-        ];
-        if (Schema::hasColumn((new $modelClass)->getTable(), 'tin')) {
+        $table = $model->getTable();
+        $payload = [$column => $value];
+        if (Schema::hasColumn($table, 'name')) {
+            $payload['name'] = $info['cn'] ?? $value;
+        }
+        if (Schema::hasColumn($table, 'email')) {
+            $payload['email'] = $info['email'] ?? ($value . '@eimzo.local');
+        }
+        if (Schema::hasColumn($table, 'password')) {
+            $payload['password'] = bcrypt(bin2hex(random_bytes(16)));
+        }
+        if (Schema::hasColumn($table, 'tin')) {
             $payload['tin'] = $info['tin'] ?? null;
         }
-        if (Schema::hasColumn((new $modelClass)->getTable(), 'pinfl')) {
+        if (Schema::hasColumn($table, 'pinfl')) {
             $payload['pinfl'] = $info['pinfl'] ?? null;
         }
 
@@ -224,17 +244,26 @@ class EimzoAuthService
         $candidates = [];
 
         if ($configuredColumn !== '') {
-            $candidates[] = $configuredColumn;
+            $candidates[] = [
+                $configuredColumn,
+                $this->signerFieldForUserColumn($configuredColumn),
+            ];
         }
 
-        foreach (['pinfl', 'tin', 'serial_number'] as $fallback) {
-            if ($fallback !== $configuredColumn) {
+        foreach ([
+            ['pinfl', 'pinfl'],
+            ['tin', 'tin'],
+            ['inn', 'tin'],
+            ['eimzo_serial_number', 'serial_number'],
+            ['serial_number', 'serial_number'],
+        ] as $fallback) {
+            if ($fallback[0] !== $configuredColumn) {
                 $candidates[] = $fallback;
             }
         }
 
-        foreach ($candidates as $column) {
-            $value = $info[$column] ?? null;
+        foreach ($candidates as [$column, $signerField]) {
+            $value = $info[$signerField] ?? null;
             if (! is_string($value) || $value === '' || ! Schema::hasColumn($table, $column)) {
                 continue;
             }
@@ -245,63 +274,16 @@ class EimzoAuthService
         return null;
     }
 
-    /**
-     * Server may return upstream cert info; merge missing fields into the
-     * locally-parsed map so downstream code sees a unified structure.
-     */
-    private function mergeServerInfo(array $info, array $serverPayload): array
+    private function signerFieldForUserColumn(string $column): string
     {
-        $map = [
-            'CN' => 'cn',
-            'TIN' => 'tin',
-            'INN' => 'tin',
-            'PINFL' => 'pinfl',
-            '1.2.860.3.16.1.1' => 'tin',
-            '1.2.860.3.16.1.2' => 'pinfl',
-            'UID' => 'uid',
-            'O' => 'o',
-            'T' => 't',
-            'serialNumber' => 'serial_number',
-            'subjectName' => 'subject_dn',
-            'issuerName' => 'issuer_dn',
-            'validFrom' => 'valid_from',
-            'validTo' => 'valid_to',
-        ];
-        foreach ($map as $from => $to) {
-            if (empty($info[$to]) && ! empty($serverPayload[$from])) {
-                $info[$to] = $serverPayload[$from];
-            }
+        if ($column === 'inn') {
+            return 'tin';
+        }
+        if ($column === 'eimzo_serial_number') {
+            return 'serial_number';
         }
 
-        // Keep serials in the same canonical form the local parser and the
-        // mobile flow use, otherwise the same certificate would upsert into
-        // two different rows depending on which side supplied the serial.
-        if (! empty($info['serial_number']) && is_string($info['serial_number'])) {
-            $info['serial_number'] = strtoupper(ltrim($info['serial_number'], '0')) ?: '0';
-        }
-
-        return $info;
+        return $column;
     }
 
-    private function serverCertificateInfo(array $payload): array
-    {
-        $info = $payload['payload'] ?? [];
-        if (isset($payload['subjectCertificateInfo'])) {
-            $info = array_merge($info, (array) $payload['subjectCertificateInfo']);
-        }
-
-        if (isset($info['subjectName']) && is_array($info['subjectName'])) {
-            $info['subject_dn'] = collect($info['subjectName'])
-                ->map(fn ($value, $key) => $key . '=' . $value)
-                ->implode(',');
-
-            foreach ($info['subjectName'] as $key => $value) {
-                $info[$key] = $value;
-            }
-
-            unset($info['subjectName']);
-        }
-
-        return $info;
-    }
 }

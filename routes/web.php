@@ -31,13 +31,15 @@ Route::post('timestamp/data', [EimzoTimestampController::class, 'data'])->name('
 Route::post('pkcs7/make-attached', [EimzoTimestampController::class, 'makeAttached'])->name('pkcs7.make-attached');
 Route::post('pkcs7/join', [EimzoTimestampController::class, 'join'])->name('pkcs7.join');
 
-Route::post('mobile/auth/start', [EimzoMobileController::class, 'authStart'])->name('mobile.auth.start');
-Route::post('mobile/auth/status', [EimzoMobileController::class, 'status'])->name('mobile.auth.status');
-Route::post('mobile/auth/complete', [EimzoMobileController::class, 'authComplete'])->name('mobile.auth.complete');
-Route::post('mobile/sign/start', [EimzoMobileController::class, 'signStart'])->name('mobile.sign.start');
-Route::post('mobile/sign/status', [EimzoMobileController::class, 'status'])->name('mobile.sign.status');
-Route::post('mobile/sign/complete', [EimzoMobileController::class, 'signComplete'])->name('mobile.sign.complete');
-// The ID-CARD app cannot send a CSRF token. Excluded from VerifyCsrfToken
-// in the consuming app (see USAGE.md), or move under api/eimzo for stateless.
-Route::match(['get', 'post'], 'mobile/upload', [EimzoMobileController::class, 'upload'])->name('mobile.upload');
-Route::match(['get', 'post'], 'frontend/mobile/upload', [EimzoMobileController::class, 'upload'])->name('mobile.upload.alias');
+if (config('eimzo.mobile.enabled', true)) {
+    Route::post('mobile/auth/start', [EimzoMobileController::class, 'authStart'])->name('mobile.auth.start');
+    Route::post('mobile/auth/status', [EimzoMobileController::class, 'status'])->name('mobile.auth.status');
+    Route::post('mobile/auth/complete', [EimzoMobileController::class, 'authComplete'])->name('mobile.auth.complete');
+    Route::post('mobile/sign/start', [EimzoMobileController::class, 'signStart'])->name('mobile.sign.start');
+    Route::post('mobile/sign/status', [EimzoMobileController::class, 'status'])->name('mobile.sign.status');
+    Route::post('mobile/sign/complete', [EimzoMobileController::class, 'signComplete'])->name('mobile.sign.complete');
+    // The ID-CARD app cannot send a CSRF token. Excluded from VerifyCsrfToken
+    // in the consuming app (see USAGE.md), or move under api/eimzo for stateless.
+    Route::match(['get', 'post'], 'mobile/upload', [EimzoMobileController::class, 'upload'])->name('mobile.upload');
+    Route::match(['get', 'post'], 'frontend/mobile/upload', [EimzoMobileController::class, 'upload'])->name('mobile.upload.alias');
+}

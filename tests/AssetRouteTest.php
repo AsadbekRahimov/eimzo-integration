@@ -34,6 +34,9 @@ class AssetRouteTest extends TestCase
 
         $response->assertOk();
         $response->assertSee('window.EIMZO_API_KEYS', false);
+        $response->assertSee('window.EIMZO_ROUTES', false);
+        $response->assertSee('"challenge":"http:\\/\\/localhost\\/eimzo\\/auth\\/challenge"', false);
+        $response->assertSee('window.EIMZO_SIGN_DEFAULT_DETACHED', false);
         $response->assertSee('"localhost"', false);
         $response->assertSee('"issued-key"', false);
     }

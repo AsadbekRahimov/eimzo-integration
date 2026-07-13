@@ -55,6 +55,8 @@ class EimzoMobileController extends Controller
             'document_id' => $data['document_id'],
             'challenge' => $data['challenge'],
             'ttl' => (int) config('eimzo.auth.challenge_ttl', 120),
+            'poll_timeout' => (int) config('eimzo.mobile.poll_timeout', 120),
+            'poll_interval_ms' => (int) config('eimzo.mobile.poll_interval_ms', 1500),
         ]);
     }
 
@@ -74,6 +76,8 @@ class EimzoMobileController extends Controller
             'site_id' => $data['site_id'],
             'document_id' => $data['document_id'],
             'ttl' => (int) config('eimzo.auth.challenge_ttl', 120),
+            'poll_timeout' => (int) config('eimzo.mobile.poll_timeout', 120),
+            'poll_interval_ms' => (int) config('eimzo.mobile.poll_interval_ms', 1500),
         ]);
     }
 
@@ -165,6 +169,10 @@ class EimzoMobileController extends Controller
                 $request,
                 $context
             );
+        } catch (\InvalidArgumentException $e) {
+            return response()->json([
+                'status' => -1, 'message' => $e->getMessage(),
+            ], 422);
         } catch (VerificationFailedException $e) {
             return response()->json([
                 'status' => -1, 'message' => $e->getMessage(), 'payload' => $e->payload(),
