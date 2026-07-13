@@ -1,5 +1,5 @@
 /*
- * Browser helper for the mobile API exposed by Iceboy/EimzoIntegration.
+ * Browser helper for the mobile API exposed by asadbekrahimov/eimzo-integration.
  *
  * The E-IMZO ID-CARD mobile app reads a QR that encodes:
  *
@@ -12,9 +12,10 @@
  *   - polls the status endpoint until status === 1
  *   - calls the complete endpoint and returns the result
  *
- * GOST R 34.11-94 hashing is provided by the bundled vendor/e-imzo.js
- * (CryptoModule.GostHash). If you only have the standard E-IMZO build, load
- * the additional gost-hash module from test.e-imzo.uz/demo/eimzoidcard.
+ * GOST R 34.11-94 hashing is NOT part of the bundled vendor scripts: load the
+ * gost-hash module (global `GostHash`) from test.e-imzo.uz/demo/eimzoidcard
+ * before calling makeQrPayload(). Without it a SHA-256 fallback is used, which
+ * real ID-CARD apps will reject - it only exists for mock/demo mode.
  *
  * Usage:
  *
@@ -95,12 +96,15 @@
             init.body = JSON.stringify(options.body);
         }
         return fetch(url, init).then(function (r) {
-            return r.json().then(function (json) {
-                if (!r.ok && (json && json.status !== 1)) {
+            return r.json().catch(function () { return null; }).then(function (json) {
+                if (!r.ok && !(json && json.status === 1)) {
                     const err = new Error((json && json.message) || ('HTTP ' + r.status));
                     err.payload = json;
                     err.status = r.status;
                     throw err;
+                }
+                if (json === null) {
+                    throw new Error('Non-JSON response from ' + url);
                 }
                 return json;
             });

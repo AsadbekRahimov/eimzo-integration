@@ -62,7 +62,14 @@ class EimzoSignService
         $pkcs7WithTs = null;
         $timestampAt = null;
         if ($attachTimestamp) {
-            $tsResp = $this->server->timestampPkcs7($pkcs7, $request->ip());
+            // A TSA outage must not fail the signing request: the unstamped
+            // PKCS#7 is still stored and verified, and the error is recorded
+            // in meta.timestamp_error so it can be re-stamped later.
+            try {
+                $tsResp = $this->server->timestampPkcs7($pkcs7, $request->ip());
+            } catch (\AsadbekRahimov\EimzoIntegration\Exceptions\EimzoServerException $e) {
+                $tsResp = ['status' => -2, 'message' => $e->getMessage()];
+            }
             if (($tsResp['status'] ?? null) === 1) {
                 // E-IMZO-SERVER returns the timestamped envelope at the top level:
                 //   {"pkcs7b64":"...","timestampedSignerList":[...],"status":1}
@@ -105,9 +112,20 @@ class EimzoSignService
             ? EimzoCertificate::upsertFromSigner($info, $input['user_id'] ?? null)
             : null;
 
-        $rawData = $detached ? base64_decode((string) $data, true) : null;
-        if ($rawData === false) {
-            $rawData = null;
+        // document_hash / document_size must describe bytes that were
+        // actually verified. For detached mode that is the caller-supplied
+        // data - the server checked the signature over exactly those bytes.
+        // For attached mode it is the document embedded in the envelope, as
+        // returned by the verify call; the caller's copy is never trusted
+        // here, since it could differ from what was really signed.
+        $rawData = null;
+        if ($detached) {
+            $rawData = $this->decodeBase64((string) $data);
+        } else {
+            $embedded = $verifyResp['pkcs7Info']['documentBase64'] ?? null;
+            if (is_string($embedded) && $embedded !== '') {
+                $rawData = $this->decodeBase64($embedded);
+            }
         }
 
         $sig = new EimzoSignature();
@@ -155,5 +173,22 @@ class EimzoSignService
         }
 
         return $sig;
+    }
+
+    /**
+     * Base64-decode tolerating the line wrapping / whitespace that real-world
+     * clients produce, while still rejecting non-base64 garbage (a plain
+     * non-strict decode would silently "decode" it into junk bytes).
+     */
+    private function decodeBase64(string $value): ?string
+    {
+        $value = (string) preg_replace('/\s+/', '', $value);
+        if ($value === '') {
+            return null;
+        }
+
+        $decoded = base64_decode($value, true);
+
+        return $decoded === false ? null : $decoded;
     }
 }

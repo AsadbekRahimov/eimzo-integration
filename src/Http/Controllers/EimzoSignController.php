@@ -5,6 +5,7 @@ namespace AsadbekRahimov\EimzoIntegration\Http\Controllers;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
+use Illuminate\Support\Facades\Gate;
 use AsadbekRahimov\EimzoIntegration\Exceptions\EimzoServerException;
 use AsadbekRahimov\EimzoIntegration\Exceptions\VerificationFailedException;
 use AsadbekRahimov\EimzoIntegration\Models\EimzoSignature;
@@ -39,7 +40,7 @@ class EimzoSignController extends Controller
     {
         $data = $request->validate([
             'pkcs7' => ['required', 'string'],
-            'data' => ['nullable', 'string'],
+            'data' => ['nullable', 'string', 'required_if:detached,true'],
             'detached' => ['nullable', 'boolean'],
             'document_type' => ['nullable', 'string', 'max:64'],
             'document_name' => ['nullable', 'string', 'max:255'],
@@ -52,6 +53,10 @@ class EimzoSignController extends Controller
 
         try {
             $sig = $this->signer->store($data, $request);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json([
+                'status' => -1, 'message' => $e->getMessage(),
+            ], 422);
         } catch (VerificationFailedException $e) {
             return response()->json([
                 'status' => -1, 'message' => $e->getMessage(), 'payload' => $e->payload(),
@@ -70,14 +75,40 @@ class EimzoSignController extends Controller
     }
 
     /**
-     * GET /eimzo/sign/{signature}
+     * GET /eimzo/signatures/{signature}
+     *
+     * Deny-by-default: only the authenticated owner of the signature may view
+     * it. To open access up (back-office, auditors, guest flows), register a
+     * policy for EimzoSignature in the consuming app - it fully takes over
+     * the decision:
+     *
+     *   Gate::policy(EimzoSignature::class, YourSignaturePolicy::class);
      */
-    public function show(EimzoSignature $signature): JsonResponse
+    public function show(Request $request, EimzoSignature $signature): JsonResponse
     {
+        if (! $this->authorizedToView($request, $signature)) {
+            return response()->json([
+                'status' => -1, 'message' => 'Forbidden',
+            ], 403);
+        }
+
         return response()->json([
             'status' => 1,
             'signature' => $this->present($signature->load('certificate')),
         ]);
+    }
+
+    private function authorizedToView(Request $request, EimzoSignature $signature): bool
+    {
+        if (Gate::getPolicyFor($signature) !== null) {
+            return Gate::forUser($request->user())->allows('view', $signature);
+        }
+
+        $user = $request->user();
+
+        return $user !== null
+            && $signature->user_id !== null
+            && (string) $signature->user_id === (string) $user->getAuthIdentifier();
     }
 
     private function present(EimzoSignature $sig): array

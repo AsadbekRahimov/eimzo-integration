@@ -15,18 +15,7 @@ class Pkcs7TestFactory
         }
 
         try {
-            $subj = '';
-            foreach ($subject as $key => $value) {
-                $subj .= '/' . $key . '=' . $value;
-            }
-
-            self::run(sprintf(
-                '%s req -x509 -newkey rsa:2048 -nodes -keyout %s -out %s -subj %s -days 365',
-                escapeshellarg($openssl),
-                escapeshellarg($tmp . '/key.pem'),
-                escapeshellarg($tmp . '/cert.pem'),
-                escapeshellarg($subj)
-            ));
+            self::issueCertificate($openssl, $tmp, $subject);
 
             file_put_contents($tmp . '/data.bin', $data);
 
@@ -46,11 +35,77 @@ class Pkcs7TestFactory
 
             return base64_encode($signed);
         } finally {
-            foreach (['key.pem', 'cert.pem', 'data.bin', 'signed.p7'] as $file) {
+            foreach (['key.pem', 'cert.pem', 'data.bin', 'signed.p7', 'req.cnf'] as $file) {
                 @unlink($tmp . '/' . $file);
             }
             @rmdir($tmp);
         }
+    }
+
+    /**
+     * Issue a self-signed certificate whose subject may contain arbitrary
+     * numeric OIDs (e.g. the Uzbek 1.2.860.3.16.1.1 TIN / 1.2.860.3.16.1.2
+     * PINFL attributes). `openssl req -subj` silently drops OIDs it does not
+     * know, so those require a config file with an oid_section.
+     */
+    private static function issueCertificate(string $openssl, string $tmp, array $subject): void
+    {
+        $numericOids = array_filter(
+            array_keys($subject),
+            static function ($key) {
+                return (bool) preg_match('/^\d+(\.\d+)+$/', (string) $key);
+            }
+        );
+
+        if (empty($numericOids)) {
+            $subj = '';
+            foreach ($subject as $key => $value) {
+                $subj .= '/' . $key . '=' . $value;
+            }
+
+            self::run(sprintf(
+                '%s req -x509 -newkey rsa:2048 -nodes -keyout %s -out %s -subj %s -days 365',
+                escapeshellarg($openssl),
+                escapeshellarg($tmp . '/key.pem'),
+                escapeshellarg($tmp . '/cert.pem'),
+                escapeshellarg($subj)
+            ));
+
+            return;
+        }
+
+        $oidLines = '';
+        $dnLines = '';
+        $i = 0;
+        foreach ($subject as $key => $value) {
+            $name = (string) $key;
+            if (in_array($key, $numericOids, true)) {
+                $name = 'customOid' . (++$i);
+                $oidLines .= $name . ' = ' . $key . "\n";
+            }
+            $dnLines .= $name . ' = ' . $value . "\n";
+        }
+
+        file_put_contents($tmp . '/req.cnf', implode("\n", [
+            'oid_section = custom_oids',
+            '',
+            '[ custom_oids ]',
+            $oidLines,
+            '[ req ]',
+            'distinguished_name = req_dn',
+            'prompt = no',
+            '',
+            '[ req_dn ]',
+            $dnLines,
+        ]));
+
+        self::run(sprintf(
+            '%s req -x509 -newkey rsa:2048 -nodes -keyout %s -out %s -config %s -days 365',
+            escapeshellarg($openssl),
+            escapeshellarg($tmp . '/key.pem'),
+            escapeshellarg($tmp . '/cert.pem'),
+            escapeshellarg($tmp . '/req.cnf')
+        ));
     }
 
     private static function opensslBinary(): string

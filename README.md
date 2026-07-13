@@ -13,7 +13,7 @@ Laravel-пакет для аутентификации через E-IMZO (Узб
 ## Требования
 
 - PHP `^7.4|^8.0`
-- Laravel `^8.0|^9.0|^10.0`
+- Laravel `^8.0|^9.0|^10.0|^11.0|^12.0`
 - E-IMZO desktop-клиент на ПК пользователя
 - Java-сервис E-IMZO-SERVER, доступный вашему Laravel-серверу
 
@@ -109,10 +109,17 @@ Web-маршруты:
 - `GET /eimzo/examples`
 - `GET /eimzo/auth/challenge`
 - `POST /eimzo/auth/verify`
+- `POST /eimzo/auth/logout`
 - `POST /eimzo/sign`
+- `GET /eimzo/signatures/{id}`
 - `POST /eimzo/verify`
+- `POST /eimzo/timestamp/pkcs7`, `POST /eimzo/timestamp/data`
+- `POST /eimzo/pkcs7/make-attached`, `POST /eimzo/pkcs7/join`
+- `POST /eimzo/mobile/auth/{start|status|complete}`
+- `POST /eimzo/mobile/sign/{start|status|complete}`
+- `GET|POST /eimzo/mobile/upload` (+ алиасы `/eimzo/frontend/mobile/upload` и корневой `/frontend/mobile/upload`)
 
-API-маршруты по умолчанию монтируются под `/api/eimzo`.
+API-маршруты по умолчанию монтируются под `/api/eimzo`. Полная таблица маршрутов — в [USAGE.md](USAGE.md).
 
 Браузерные ассеты обслуживаются по адресам:
 

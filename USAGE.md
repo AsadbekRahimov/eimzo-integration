@@ -183,7 +183,7 @@ mobile.storage.redis.db=1
 | POST    | `/eimzo/auth/verify`                 | Проверить подписанный challenge, залогинить |
 | POST    | `/eimzo/auth/logout`                 | Logout |
 | POST    | `/eimzo/sign`                        | Сохранить и проверить PKCS#7 |
-| GET     | `/eimzo/signatures/{id}`             | Получить подпись |
+| GET     | `/eimzo/signatures/{id}`             | Получить подпись (только владелец; расширяется policy) |
 | POST    | `/eimzo/verify`                      | Stateless-верификация PKCS#7 |
 | POST    | `/eimzo/timestamp/pkcs7`             | TSA-таймстамп для PKCS#7 |
 | POST    | `/eimzo/timestamp/data`              | TSA-таймстамп для произвольных данных |
@@ -197,6 +197,7 @@ mobile.storage.redis.db=1
 | POST    | `/eimzo/mobile/sign/complete`        | Завершить мобильную подпись |
 | POST    | `/eimzo/mobile/upload`               | UPLOAD URL для ID-CARD |
 | GET/POST| `/eimzo/frontend/mobile/upload`      | Алиас для совместимости |
+| GET/POST| `/frontend/mobile/upload`            | Корневой алиас (путь из эталонного демо qo0p) |
 
 Те же эндпоинты доступны под `/api/eimzo/*` (guard `api`, без CSRF, без сессий).
 
@@ -459,7 +460,8 @@ HTTP-обёртки тех же операций: `POST /eimzo/timestamp/pkcs7`,
 ```html
 <script src="/vendor/eimzo/eimzo-mobile.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/qrcode/build/qrcode.min.js"></script>
-<!-- GostHash: либо из стандартного e-imzo.js, либо подгрузить отдельно -->
+<!-- GostHash НЕ входит в поставляемые vendor-скрипты: подключите gost-hash.js
+     отдельно (см. https://test.e-imzo.uz/demo/eimzoidcard) -->
 ```
 
 ```javascript
@@ -495,9 +497,11 @@ const sig = await m.waitAndCompleteSign(session.document_id, documentBase64, {
 siteId(4 hex) + documentId(8 hex) + gostHash34_11_94(64 hex) + CRC32(8 hex)
 ```
 
-`makeQrPayload()` собирает строку. Для GOST-хеша используется
-`global.GostHash` (входит в стандартный `e-imzo.js`). Если хеша нет —
-fallback на SHA-256 для отладки (мобильное приложение его не примет).
+`makeQrPayload()` собирает строку. Для GOST-хеша используется глобальный
+`GostHash` — он **не входит** в поставляемые vendor-скрипты, подключите
+`gost-hash.js` отдельно (образец — <https://test.e-imzo.uz/demo/eimzoidcard>).
+Если хеша нет — fallback на SHA-256 для отладки (мобильное приложение его
+не примет).
 
 ### UPLOAD URL
 
@@ -669,8 +673,10 @@ try {
    стоите за nginx, убедитесь что он передаёт реальный IP в `X-Real-IP`.
 3. **CSRF** — все маршруты под `web` защищены, кроме `mobile/upload`
    (см. раздел установки).
-4. **One-time challenge** — `eimzo_challenges.used_at` помечается после
-   первой успешной верификации. Replay невозможен.
+4. **One-time challenge** — `eimzo_challenges.used_at` захватывается
+   атомарным условным UPDATE (`WHERE used_at IS NULL`) до записи
+   результатов. Даже при конкурентной повторной отправке того же
+   подписанного challenge успешным будет ровно один запрос.
 5. **Match-проверка** — `EimzoAuthService` проверяет, что подписанный
    challenge внутри PKCS#7 совпадает с тем, что выдал сервер.
 6. **OCSP** — выполняется в E-IMZO-SERVER через VPN. Если VPN недоступен,
@@ -680,7 +686,21 @@ try {
    сертификата.
 8. **Mobile DocumentID** — одноразовый, TTL = `EIMZO_CHALLENGE_TTL`.
    Полным аналогом nonce служит сам DocumentID, который мы храним в
-   `eimzo_challenges` со столь же одноразовой семантикой.
+   `eimzo_challenges` со столь же одноразовой семантикой (атомарный захват,
+   как и у desktop-challenge).
+9. **Доступ к подписям** — `GET /eimzo/signatures/{id}` отдаёт подпись
+   только её владельцу (`user_id` совпадает с аутентифицированным
+   пользователем); гости и чужие пользователи получают 403. Чтобы открыть
+   доступ бэк-офису или аудиторам, зарегистрируйте policy — она полностью
+   берёт решение на себя:
+
+   ```php
+   // AppServiceProvider::boot()
+   Gate::policy(
+       \AsadbekRahimov\EimzoIntegration\Models\EimzoSignature::class,
+       \App\Policies\EimzoSignaturePolicy::class   // метод view(?User $u, EimzoSignature $s)
+   );
+   ```
 
 ---
 
@@ -702,7 +722,7 @@ composer test
 - ExamplePages (smoke views)
 
 ```bash
-php vendor\bin\phpunit
+php vendor/bin/phpunit
 ```
 
 ---

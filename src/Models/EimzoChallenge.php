@@ -60,8 +60,24 @@ class EimzoChallenge extends Model
         return $this->used_at !== null;
     }
 
-    public function markUsed(): void
+    /**
+     * Atomically claim this challenge for one-time use via a conditional
+     * UPDATE. Returns false when a concurrent request already consumed it -
+     * callers must treat that as a replay and abort.
+     */
+    public function markUsed(): bool
     {
-        $this->forceFill(['used_at' => now()])->save();
+        $now = now();
+        $claimed = static::query()
+            ->whereKey($this->getKey())
+            ->whereNull('used_at')
+            ->update(['used_at' => $now]) === 1;
+
+        if ($claimed) {
+            $this->used_at = $now;
+            $this->syncOriginalAttribute('used_at');
+        }
+
+        return $claimed;
     }
 }

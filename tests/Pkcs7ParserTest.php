@@ -48,6 +48,25 @@ class Pkcs7ParserTest extends TestCase
         $this->assertNotEmpty($info['certificate_pem']);
     }
 
+    public function test_extracts_tin_and_pinfl_from_uzbek_numeric_oids(): void
+    {
+        // Real E-IMZO certificates carry TIN / PINFL under OIDs that openssl
+        // does not know, so the parsed DN keeps them in dotted-numeric form.
+        $pkcs7 = $this->makePkcs7Attached([
+            'C' => 'UZ',
+            'CN' => 'Real Cert User',
+            '1.2.860.3.16.1.1' => '301234567',
+            '1.2.860.3.16.1.2' => '31234567890123',
+        ], 'sample data');
+
+        $parser = new Pkcs7Parser();
+        $info = $parser->parseSigner($pkcs7);
+
+        $this->assertSame('Real Cert User', $info['cn']);
+        $this->assertSame('301234567', $info['tin']);
+        $this->assertSame('31234567890123', $info['pinfl']);
+    }
+
     public function test_x500_parser_handles_quoted_and_escaped_values(): void
     {
         $rdn = X500NameParser::parse('CN="Smith\, Jane",O=Acme\, Inc,UID=12345');

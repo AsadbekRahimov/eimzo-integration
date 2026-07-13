@@ -418,7 +418,7 @@ await eimzo.sign(key, {
   │  {status:1, redirect, ...}                                           │
 ```
 
-Формат QR-payload (`site_id + document_id + GOST(text) + crc32(...)`) реализован в `resources/js/eimzo-mobile.js::makeQrPayload()`. Он ожидает глобальный `GostHash` (его поставляет desktop-клиент, либо вы можете подключить `gost-hash.js` с `test.e-imzo.uz/demo/eimzoidcard`).
+Формат QR-payload (`site_id + document_id + GOST(text) + crc32(...)`) реализован в `resources/js/eimzo-mobile.js::makeQrPayload()`. Он ожидает глобальный `GostHash` — этот модуль **не входит** в поставляемые vendor-скрипты, подключите `gost-hash.js` отдельно (образец — `test.e-imzo.uz/demo/eimzoidcard`). Без него используется SHA-256-fallback, который реальное ID-CARD-приложение не примет.
 
 ---
 
@@ -426,7 +426,7 @@ await eimzo.sign(key, {
 
 | # | Инвариант | Где обеспечивается |
 |---|---|---|
-| 1 | Подписанный challenge можно верифицировать только **один раз** | `eimzo_challenges.used_at`, выставляется в `EimzoAuthService::verifyChallenge()` |
+| 1 | Подписанный challenge можно верифицировать только **один раз** | `eimzo_challenges.used_at`, захватывается атомарным условным UPDATE в `EimzoAuthService::verifyChallenge()` (и в mobile-потоках) до записи результатов — конкурентный replay проигрывает гонку |
 | 2 | Подписанный challenge истекает по TTL | `eimzo_challenges.expires_at`, по умолчанию 120с |
 | 3 | PKCS#7 должен встраивать **те же** байты challenge, что были выпущены | `EimzoAuthService::verifyChallenge()` сравнивает `$payload['payload']['challenge']` с записью |
 | 4 | Подписной сертификат должен быть валиден на момент проверки против гос-PKI | E-IMZO-SERVER `/backend/auth` и `/backend/pkcs7/verify/*` (локальному парсингу для проверки доверия мы не верим) |

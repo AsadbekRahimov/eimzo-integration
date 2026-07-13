@@ -97,6 +97,13 @@ class EimzoAuthService
             throw new VerificationFailedException('Challenge mismatch in PKCS#7', $payload);
         }
 
+        // Claim the challenge atomically before persisting anything: of two
+        // concurrent requests replaying the same signed challenge only one
+        // can win the conditional UPDATE, so only one login ever succeeds.
+        if (! $row->markUsed()) {
+            throw new ChallengeExpiredException('Challenge already used');
+        }
+
         $info = config('eimzo.local_parse', true)
             ? $this->parser->parseSigner($pkcs7Base64)
             : [];
@@ -125,8 +132,6 @@ class EimzoAuthService
             'verified_at' => now(),
             'signed_at' => now(),
         ]);
-
-        $row->markUsed();
 
         if ($user instanceof Authenticatable) {
             $this->auth->guard(config('eimzo.auth.guard', 'web'))->login($user, true);
@@ -255,7 +260,7 @@ class EimzoAuthService
             '1.2.860.3.16.1.2' => 'pinfl',
             'UID' => 'uid',
             'O' => 'o',
-            'T' => 'title',
+            'T' => 't',
             'serialNumber' => 'serial_number',
             'subjectName' => 'subject_dn',
             'issuerName' => 'issuer_dn',
@@ -267,6 +272,14 @@ class EimzoAuthService
                 $info[$to] = $serverPayload[$from];
             }
         }
+
+        // Keep serials in the same canonical form the local parser and the
+        // mobile flow use, otherwise the same certificate would upsert into
+        // two different rows depending on which side supplied the serial.
+        if (! empty($info['serial_number']) && is_string($info['serial_number'])) {
+            $info['serial_number'] = strtoupper(ltrim($info['serial_number'], '0')) ?: '0';
+        }
+
         return $info;
     }
 

@@ -186,6 +186,12 @@ class EimzoMobileService
             );
         }
 
+        // Claim the DocumentID atomically before persisting anything so a
+        // concurrent replay can only ever produce one successful login.
+        if (! $row->markUsed()) {
+            throw new VerificationFailedException('Mobile DocumentID already used');
+        }
+
         $info = $this->subjectInfo($payload);
         $user = $this->resolveUser($info);
 
@@ -212,8 +218,6 @@ class EimzoMobileService
             'verified_at' => now(),
             'signed_at' => now(),
         ]);
-
-        $row->markUsed();
 
         if ($user instanceof Authenticatable) {
             $this->auth->guard(config('eimzo.auth.guard', 'web'))->login($user, true);
@@ -252,6 +256,12 @@ class EimzoMobileService
             );
         }
 
+        // Same one-shot claim as completeAuth: only one of two concurrent
+        // completions may store a signature for this DocumentID.
+        if (! $row->markUsed()) {
+            throw new VerificationFailedException('Mobile DocumentID already used');
+        }
+
         $info = $this->subjectInfo($payload);
         $certificate = ! empty($info['serial_number'])
             ? EimzoCertificate::upsertFromSigner($info, $context['user_id'] ?? null)
@@ -278,8 +288,6 @@ class EimzoMobileService
                 'policy_identifiers' => $payload['verificationInfo']['policyIdentifiers'] ?? [],
             ]),
         ]);
-
-        $row->markUsed();
 
         return $sig;
     }
