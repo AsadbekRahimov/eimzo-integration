@@ -112,12 +112,20 @@ class EimzoSignService
             ? EimzoCertificate::upsertFromSigner($info, $input['user_id'] ?? null)
             : null;
 
-        // Hash whatever original data the caller supplied, for attached
-        // envelopes too - document_hash is what business tables (e.g.
-        // signed_actions.payload_hash) are matched against.
-        $rawData = is_string($data) && $data !== '' ? base64_decode($data, true) : null;
-        if ($rawData === false) {
-            $rawData = null;
+        // document_hash / document_size must describe bytes that were
+        // actually verified. For detached mode that is the caller-supplied
+        // data - the server checked the signature over exactly those bytes.
+        // For attached mode it is the document embedded in the envelope, as
+        // returned by the verify call; the caller's copy is never trusted
+        // here, since it could differ from what was really signed.
+        $rawData = null;
+        if ($detached) {
+            $rawData = $this->decodeBase64((string) $data);
+        } else {
+            $embedded = $verifyResp['pkcs7Info']['documentBase64'] ?? null;
+            if (is_string($embedded) && $embedded !== '') {
+                $rawData = $this->decodeBase64($embedded);
+            }
         }
 
         $sig = new EimzoSignature();
@@ -165,5 +173,22 @@ class EimzoSignService
         }
 
         return $sig;
+    }
+
+    /**
+     * Base64-decode tolerating the line wrapping / whitespace that real-world
+     * clients produce, while still rejecting non-base64 garbage (a plain
+     * non-strict decode would silently "decode" it into junk bytes).
+     */
+    private function decodeBase64(string $value): ?string
+    {
+        $value = (string) preg_replace('/\s+/', '', $value);
+        if ($value === '') {
+            return null;
+        }
+
+        $decoded = base64_decode($value, true);
+
+        return $decoded === false ? null : $decoded;
     }
 }

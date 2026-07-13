@@ -61,19 +61,74 @@ class SignFlowTest extends TestCase
         $this->assertStringContainsString('unreachable', $sig->meta['timestamp_error']);
     }
 
-    public function test_attached_sign_hashes_provided_data(): void
+    public function test_attached_sign_hashes_the_verified_embedded_document(): void
+    {
+        Config::set('eimzo.local_parse', false);
+        Config::set('eimzo.sign.storage_disk', null);
+        $document = '{"action":"approve_invoice","entity_id":1024}';
+        $this->mockServer([
+            'verifyAttached' => [
+                'status' => 1,
+                'message' => '',
+                'pkcs7Info' => ['documentBase64' => base64_encode($document)],
+            ],
+        ]);
+
+        $r = $this->postJson('/eimzo/sign', [
+            'pkcs7' => base64_encode('envelope'),
+            'detached' => false,
+            'attach_timestamp' => false,
+        ]);
+
+        $r->assertOk();
+        $sig = EimzoSignature::first();
+        $this->assertSame(hash('sha256', $document), $sig->document_hash);
+        $this->assertSame(strlen($document), $sig->document_size);
+    }
+
+    public function test_attached_sign_never_trusts_caller_supplied_data_for_the_hash(): void
+    {
+        Config::set('eimzo.local_parse', false);
+        Config::set('eimzo.sign.storage_disk', null);
+        $signedDocument = '{"action":"approve_invoice","entity_id":1024}';
+        $this->mockServer([
+            'verifyAttached' => [
+                'status' => 1,
+                'message' => '',
+                'pkcs7Info' => ['documentBase64' => base64_encode($signedDocument)],
+            ],
+        ]);
+
+        // A malicious caller sends a valid envelope for document A together
+        // with unrelated "data" for document B - the stored hash must still
+        // describe A, the document that was actually verified.
+        $r = $this->postJson('/eimzo/sign', [
+            'pkcs7' => base64_encode('envelope'),
+            'data' => base64_encode('{"action":"approve_invoice","entity_id":9999}'),
+            'detached' => false,
+            'attach_timestamp' => false,
+        ]);
+
+        $r->assertOk();
+        $this->assertSame(hash('sha256', $signedDocument), EimzoSignature::first()->document_hash);
+    }
+
+    public function test_detached_sign_accepts_line_wrapped_base64_data(): void
     {
         Config::set('eimzo.local_parse', false);
         Config::set('eimzo.sign.storage_disk', null);
         $this->mockServer([
-            'verifyAttached' => ['status' => 1, 'message' => ''],
+            'verifyDetached' => ['status' => 1, 'message' => ''],
         ]);
 
-        $document = '{"action":"approve_invoice","entity_id":1024}';
+        $document = str_repeat('contract body ', 20);
+        // MIME-style base64 with 64-char lines, as many clients produce.
+        $wrapped = trim(chunk_split(base64_encode($document), 64, "\n"));
+
         $r = $this->postJson('/eimzo/sign', [
             'pkcs7' => base64_encode('envelope'),
-            'data' => base64_encode($document),
-            'detached' => false,
+            'data' => $wrapped,
+            'detached' => true,
             'attach_timestamp' => false,
         ]);
 
